@@ -1,0 +1,15 @@
+{
+  "models": [
+    {
+      "slug": "plain-model",
+      "display_name": "Plain",
+      "context_window": 8192,
+      "base_instructions": "Synthetic minimal instructions.",
+      "shell_type": "unified_exec",
+      "truncation_policy": {
+        "mode": "tokens",
+        "limit": 10000
+      }
+    }
+  ]
+}

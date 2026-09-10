@@ -1,0 +1,207 @@
+{
+  "models": [
+    {
+      "slug": "gpt-native-top",
+      "display_name": "GPT-NATIVE-TOP",
+      "description": "Synthetic native entry for tests.",
+      "default_reasoning_level": "medium",
+      "supported_reasoning_levels": [
+        {
+          "effort": "low",
+          "description": "Synthetic low description."
+        },
+        {
+          "effort": "medium",
+          "description": "Synthetic medium description."
+        },
+        {
+          "effort": "high",
+          "description": "Synthetic high description."
+        }
+      ],
+      "shell_type": "unified_exec",
+      "visibility": "list",
+      "supported_in_api": true,
+      "priority": 1,
+      "additional_speed_tiers": [
+        "fast"
+      ],
+      "service_tiers": [
+        {
+          "id": "priority",
+          "name": "Fast",
+          "description": "Synthetic tier."
+        }
+      ],
+      "availability_nux": null,
+      "upgrade": null,
+      "model_messages": {
+        "instructions_template": "Synthetic native template for gpt-native-top."
+      },
+      "include_skills_usage_instructions": false,
+      "include_plugin_usage_instructions": true,
+      "include_apps_usage_instructions": true,
+      "default_reasoning_summary": "none",
+      "support_verbosity": true,
+      "default_verbosity": "low",
+      "apply_patch_tool_type": "freeform",
+      "web_search_tool_type": "text_and_image",
+      "truncation_policy": {
+        "mode": "tokens",
+        "limit": 10000
+      },
+      "supports_image_detail_original": true,
+      "context_window": 272000,
+      "max_context_window": 544000,
+      "comp_hash": "1234",
+      "effective_context_window_percent": 95,
+      "experimental_supported_tools": [],
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "supports_search_tool": true,
+      "use_responses_lite": false,
+      "node_repl_auto_review_required": true,
+      "node_repl_disabled": false,
+      "base_instructions": "Synthetic native instructions for gpt-native-top. Not real model instructions.",
+      "tool_mode": "code",
+      "multi_agent_version": "2"
+    },
+    {
+      "slug": "gpt-native-hidden",
+      "display_name": "GPT-NATIVE-HIDDEN",
+      "description": "Synthetic native entry for tests.",
+      "default_reasoning_level": "medium",
+      "supported_reasoning_levels": [
+        {
+          "effort": "low",
+          "description": "Synthetic low description."
+        },
+        {
+          "effort": "medium",
+          "description": "Synthetic medium description."
+        },
+        {
+          "effort": "high",
+          "description": "Synthetic high description."
+        }
+      ],
+      "shell_type": "unified_exec",
+      "visibility": "hide",
+      "supported_in_api": true,
+      "priority": 2,
+      "additional_speed_tiers": [
+        "fast"
+      ],
+      "service_tiers": [
+        {
+          "id": "priority",
+          "name": "Fast",
+          "description": "Synthetic tier."
+        }
+      ],
+      "availability_nux": null,
+      "upgrade": null,
+      "model_messages": {
+        "instructions_template": "Synthetic native template for gpt-native-hidden."
+      },
+      "include_skills_usage_instructions": false,
+      "include_plugin_usage_instructions": true,
+      "include_apps_usage_instructions": true,
+      "default_reasoning_summary": "none",
+      "support_verbosity": true,
+      "default_verbosity": "low",
+      "apply_patch_tool_type": "freeform",
+      "web_search_tool_type": "text_and_image",
+      "truncation_policy": {
+        "mode": "tokens",
+        "limit": 10000
+      },
+      "supports_image_detail_original": true,
+      "context_window": 128000,
+      "max_context_window": 256000,
+      "comp_hash": "1234",
+      "effective_context_window_percent": 95,
+      "experimental_supported_tools": [],
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "supports_search_tool": true,
+      "use_responses_lite": false,
+      "node_repl_auto_review_required": true,
+      "node_repl_disabled": false,
+      "base_instructions": "Synthetic native instructions for gpt-native-hidden. Not real model instructions."
+    },
+    {
+      "slug": "gpt-native-second",
+      "display_name": "GPT-NATIVE-SECOND",
+      "description": "Synthetic native entry for tests.",
+      "default_reasoning_level": "medium",
+      "supported_reasoning_levels": [
+        {
+          "effort": "low",
+          "description": "Synthetic low description."
+        },
+        {
+          "effort": "medium",
+          "description": "Synthetic medium description."
+        },
+        {
+          "effort": "high",
+          "description": "Synthetic high description."
+        }
+      ],
+      "shell_type": "unified_exec",
+      "visibility": "list",
+      "supported_in_api": true,
+      "priority": 7,
+      "additional_speed_tiers": [
+        "fast"
+      ],
+      "service_tiers": [
+        {
+          "id": "priority",
+          "name": "Fast",
+          "description": "Synthetic tier."
+        }
+      ],
+      "availability_nux": null,
+      "upgrade": null,
+      "model_messages": {
+        "instructions_template": "Synthetic native template for gpt-native-second."
+      },
+      "include_skills_usage_instructions": false,
+      "include_plugin_usage_instructions": true,
+      "include_apps_usage_instructions": true,
+      "default_reasoning_summary": "none",
+      "support_verbosity": true,
+      "default_verbosity": "low",
+      "apply_patch_tool_type": "freeform",
+      "web_search_tool_type": "text_and_image",
+      "truncation_policy": {
+        "mode": "tokens",
+        "limit": 10000
+      },
+      "supports_image_detail_original": true,
+      "context_window": 272000,
+      "max_context_window": 544000,
+      "comp_hash": "1234",
+      "effective_context_window_percent": 95,
+      "experimental_supported_tools": [],
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "supports_search_tool": true,
+      "use_responses_lite": false,
+      "node_repl_auto_review_required": true,
+      "node_repl_disabled": false,
+      "base_instructions": "Synthetic native instructions for gpt-native-second. Not real model instructions.",
+      "tool_mode": "code",
+      "multi_agent_version": "2"
+    }
+  ],
+  "revision": "2026-09-10"
+}
