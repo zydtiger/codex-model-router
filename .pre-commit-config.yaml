@@ -1,0 +1,56 @@
+# Minimal Go starting point; derive prefixes and checks from the repository.
+minimum_prek_version: "0.4.14"
+default_install_hook_types: [pre-commit, pre-push, commit-msg]
+default_stages: [pre-commit]
+
+repos:
+  - repo: builtin
+    hooks:
+      - id: check-added-large-files
+      - id: detect-private-key
+      - id: check-merge-conflict
+      - id: check-yaml
+      - id: end-of-file-fixer
+      - id: mixed-line-ending
+      - id: trailing-whitespace
+      - id: require-pattern
+        name: commit subject
+        stages: [commit-msg]
+        args: ['^(Merge |(feat|fix|docs|refactor|test|build|ci|perf|chore|revert)(\([a-z0-9-]+\))?: [a-z])']
+
+  - repo: https://github.com/rhysd/actionlint
+    rev: v1.7.12
+    hooks:
+      - id: actionlint
+        args: [-shellcheck=, -pyflakes=]
+
+  - repo: local
+    hooks:
+      # Select the go.mod toolchain through GOTOOLCHAIN before running hooks.
+      - id: gofmt
+        name: gofmt
+        entry: sh -c '"$(go env GOROOT)/bin/gofmt" -w "$@"' --
+        language: system
+        types: [go]
+        exclude: ^vendor/
+      - id: go-mod-tidy
+        name: go mod tidy -- check
+        entry: go mod tidy -diff
+        language: system
+        pass_filenames: false
+        files: '(\.go$|^go\.(mod|sum)$)'
+        stages: [pre-push]
+      - id: go-vet
+        name: go vet
+        entry: go vet -mod=readonly ./...
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-push]
+      - id: go-test
+        name: go test
+        entry: go test -mod=readonly ./...
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-push]
