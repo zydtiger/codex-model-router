@@ -50,6 +50,15 @@ Flags: `--label`, `--bin`, `--config`, `--plist-dir`, `--log-dir`,
 `--working-directory`, `--throttle-interval`, `--shutdown-timeout`,
 `--env KEY=VALUE` (repeatable), `--force`, and `--dry-run`.
 
+## Optional ChatGPT proxy settings
+
+The service reads `~/.codex/.env` when it starts, or `$CODEX_HOME/.env` if
+`CODEX_HOME` is supplied to the service. No proxy variables need to be copied
+into the LaunchAgent when they are provided by this file. A missing file or no
+proxy entries preserves existing behavior. File settings apply only to the
+native ChatGPT upstream; see the README for supported variables and precedence.
+Restart the service to load changes. The file does not supply route API keys.
+
 ## Keeping a key available
 
 `routes[].auth.api_key_env` and `native.api_key_env` name environment variables,

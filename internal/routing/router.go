@@ -64,6 +64,8 @@ type Options struct {
 	// Transport overrides the upstream transport, for tests. When set it is
 	// shared by every upstream and per-route header timeouts are ignored.
 	Transport http.RoundTripper
+	// ChatGPTProxy overrides only the native ChatGPT transport proxy lookup.
+	ChatGPTProxy func(*http.Request) (*url.URL, error)
 	// BoundAddr is the address the listener actually opened.
 	BoundAddr string
 }
@@ -199,6 +201,9 @@ func newTarget(name, rawBase string, kind targetKind, route *config.Route, optio
 			return nil, errors.New("target " + name + ": the default transport has been replaced")
 		}
 		clone := defaults.Clone()
+		if kind == kindNativeChatGPT && options.ChatGPTProxy != nil {
+			clone.Proxy = options.ChatGPTProxy
+		}
 		clone.ResponseHeaderTimeout = time.Duration(headerTimeoutSeconds(route)) * time.Second
 		clone.MaxIdleConnsPerHost = 4
 		transport = clone

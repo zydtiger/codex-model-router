@@ -84,6 +84,22 @@ or the OpenAI API endpoint. Remote routes receive allowlisted headers and their
 own configured credential; incoming native credentials are removed. The router
 does not read Codex authentication files.
 
+At startup, the ChatGPT upstream optionally reads proxy settings from
+`$CODEX_HOME/.env`, defaulting to `~/.codex/.env`. Supported names are
+`HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`, and `NO_PROXY`, including lowercase
+variants. Existing process variables take precedence over file entries with the
+same name; uppercase nonempty values take precedence over lowercase variants.
+`ALL_PROXY` is the fallback when a scheme-specific proxy is unset.
+
+A missing file or a file without proxy keys leaves existing transport behavior
+unchanged. The file supports dotenv assignments, quoting, comments, and `export`;
+it is parsed as data, never executed as a shell script. Unreadable or malformed
+files stop startup with an error that does not include their contents. Only
+proxy settings are used: other file variables are not exported or used as
+credentials. File settings affect only the native ChatGPT upstream, including
+its configured endpoint override; API-key and self-hosted routes retain their
+existing process-environment proxy behavior. Restart the router after edits.
+
 The listener and request peers must be loopback. Supported endpoints are
 `GET /healthz` and `POST <base_path>/responses` plus Responses subpaths; the default
 base path is `/v1`. WebSocket upgrades return 426; HTTP fallback depends on the

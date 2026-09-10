@@ -252,7 +252,11 @@ func cmdServe(args []string, stdout, stderr io.Writer) error {
 		return err
 	}
 	logger := newLogger(cfg, *logLevel, stderr)
-	router, err := routing.New(cfg, routing.Options{Logger: logger, Env: os.LookupEnv})
+	chatGPTProxy, err := routing.LoadChatGPTProxy(os.LookupEnv)
+	if err != nil {
+		return err
+	}
+	router, err := routing.New(cfg, routing.Options{Logger: logger, Env: os.LookupEnv, ChatGPTProxy: chatGPTProxy})
 	if err != nil {
 		return err
 	}
