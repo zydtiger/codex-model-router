@@ -95,12 +95,13 @@ type Router struct {
 
 // target is one upstream plus the reverse proxy that reaches it.
 type target struct {
-	name    string
-	base    *url.URL
-	route   *config.Route // nil for the native targets
-	proxy   *httputil.ReverseProxy
-	kind    targetKind
-	stripV1 bool
+	name      string
+	base      *url.URL
+	route     *config.Route // nil for the native targets
+	proxy     *httputil.ReverseProxy
+	transport http.RoundTripper
+	kind      targetKind
+	stripV1   bool
 }
 
 type targetKind int
@@ -120,17 +121,20 @@ type routeSnapshot struct {
 // requestState carries the per-request routing decision through the reverse
 // proxy hooks.
 type requestState struct {
-	started  time.Time
-	method   string
-	rest     string
-	model    string
-	route    string
-	target   *target
-	body     []byte
-	headers  http.Header
-	status   int
-	result   string
-	warnings []string
+	started       time.Time
+	method        string
+	rest          string
+	model         string
+	route         string
+	target        *target
+	body          []byte
+	headers       http.Header
+	status        int
+	result        string
+	warnings      []string
+	namespaces    *namespaceMapping
+	disclosure    *toolDisclosure
+	responseLimit int64
 }
 
 type stateKey struct{}
@@ -211,6 +215,7 @@ func newTarget(name, rawBase string, kind targetKind, route *config.Route, optio
 		clone.MaxIdleConnsPerHost = 4
 		transport = clone
 	}
+	upstream.transport = transport
 	upstream.proxy = &httputil.ReverseProxy{
 		Rewrite:        upstream.rewrite,
 		ModifyResponse: upstream.modifyResponse,
@@ -333,13 +338,36 @@ func (h *Router) selectTarget(r *http.Request, model string, body *decodedBody, 
 		if err != nil {
 			return nil, err
 		}
+		if route.Reasoning.Adapter == config.AdapterSGLangChatTemplate {
+			mapping, err := flattenNamespaces(translated)
+			if err != nil {
+				return nil, err
+			}
+			state.namespaces = mapping
+			state.disclosure = prepareToolDisclosure(translated, mapping)
+			if state.disclosure != nil {
+				state.disclosure.reasoningPolicy = route.Input.ReasoningItems
+				for _, key := range []string{"previous_response_id", "conversation"} {
+					if raw := translated[key]; raw != nil && !bytesNull(raw) {
+						return nil, clientError(http.StatusBadRequest, "disclosure_requires_history", "namespace tool disclosure requires replayed input instead of %s", key)
+					}
+				}
+			}
+			state.responseLimit = h.cfg.MaxRequestBytes
+		}
 		encoded, err := encodeJSON(translated)
 		if err != nil {
 			return nil, err
 		}
+		if int64(len(encoded)) > h.cfg.MaxRequestBytes {
+			return nil, clientError(http.StatusRequestEntityTooLarge, "request_too_large", "translated request body exceeds size limit")
+		}
 		headers, err := buildRemoteHeaders(r.Header, route, h.env)
 		if err != nil {
 			return nil, err
+		}
+		if state.namespaces != nil {
+			headers.Set("Accept-Encoding", "identity")
 		}
 		state.body = encoded
 		state.headers = headers
@@ -448,6 +476,14 @@ func (t *target) targetURL(rest, rawQuery string) *url.URL {
 func (t *target) modifyResponse(resp *http.Response) error {
 	if state, ok := resp.Request.Context().Value(stateKey{}).(*requestState); ok && state != nil {
 		state.status = resp.StatusCode
+		if state.disclosure != nil {
+			if err := adaptDisclosureResponse(resp, state.disclosure, t.transport, state.responseLimit); err != nil {
+				return err
+			}
+		}
+		if state.namespaces != nil {
+			return adaptNamespaceResponse(resp, state.namespaces, state.responseLimit)
+		}
 	}
 	return nil
 }
