@@ -1,4 +1,4 @@
-// Package service renders and manages the macOS LaunchAgent that keeps the
+// Package service renders and manages user services that keep the
 // router running. The template and the lifecycle logic live in this repository so
 // that deployment is reproducible from a checkout.
 package service
@@ -54,6 +54,10 @@ const Template = `<?xml version="1.0" encoding="UTF-8"?>
 // Options describes one managed LaunchAgent. Every path is configurable, which is
 // what makes the lifecycle testable without touching a real machine.
 type Options struct {
+	// Platform selects darwin (launchd) or linux (systemd); empty uses the host.
+	Platform string
+	// UnitDir is the Linux systemd user unit directory.
+	UnitDir string
 	// Label is the launchd label. Empty selects DefaultLabel.
 	Label string
 	// BinaryPath is the stable path the executable is installed to. The agent
@@ -80,6 +84,7 @@ type Options struct {
 
 // Resolved is Options with defaults applied.
 type Resolved struct {
+	UnitPath string
 	Options
 	Label             string
 	PlistPath         string

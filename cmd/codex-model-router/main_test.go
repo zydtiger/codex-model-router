@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -305,17 +306,26 @@ func TestServicePreviewAndDryRunTouchNothing(t *testing.T) {
 	}
 
 	out := mustRun(t, exitOK, "service", "preview", "--config", work.configPath, "--bin", binary)
-	if !strings.Contains(out, "<key>Label</key>") || !strings.Contains(out, service.DefaultLabel) {
+	marker := "<key>Label</key>"
+	pathMarker := "# plist path:"
+	if runtime.GOOS == "linux" {
+		marker = "[Service]"
+		pathMarker = "# unit path:"
+	}
+	if !strings.Contains(out, marker) || !strings.Contains(out, service.DefaultLabel) {
 		t.Fatalf("preview output:\n%s", out)
 	}
 	if !strings.Contains(out, "serve") || !strings.Contains(out, work.configPath) {
 		t.Fatalf("preview does not show the serve invocation:\n%s", out)
 	}
-	if !strings.Contains(out, "# plist path:") {
+	if !strings.Contains(out, pathMarker) {
 		t.Fatalf("preview does not report where the plist would go:\n%s", out)
 	}
 	// Nothing is written by preview.
 	plistDir := filepath.Join(os.Getenv("HOME"), "Library", "LaunchAgents")
+	if runtime.GOOS == "linux" {
+		plistDir = filepath.Join(os.Getenv("HOME"), ".config", "systemd", "user")
+	}
 	if _, err := os.Stat(plistDir); !os.IsNotExist(err) {
 		t.Fatal("service preview created the LaunchAgents directory")
 	}

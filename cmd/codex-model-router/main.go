@@ -15,6 +15,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
@@ -107,10 +108,10 @@ Commands:
   validate                  Check a configuration without opening a port
   catalog generate          Merge native and self-hosted models into a catalog JSON
   catalog print-example     Print a starting-point configuration
-  service preview           Print the LaunchAgent that would be written
-  service install           Install and start the LaunchAgent (macOS, no sudo)
-  service status            Report the LaunchAgent state and router health
-  service uninstall         Stop the agent and remove its plist
+  service preview           Print the platform service definition
+  service install           Install and start a user service (macOS/Linux, no sudo)
+  service status            Report the service state and router health
+  service uninstall         Stop the service and remove its definition
   healthcheck               Probe a running router; exit 0 when healthy
   version                   Print the version
 
@@ -493,17 +494,19 @@ func cmdService(args []string, stdout io.Writer) error {
 	flags := flag.NewFlagSet("service "+subcommand, flag.ContinueOnError)
 	configPath := registerConfigFlag(flags)
 	var options service.Options
-	flags.StringVar(&options.Label, "label", service.DefaultLabel, "launchd label")
+	options.Platform = runtime.GOOS
+	flags.StringVar(&options.Label, "label", service.DefaultLabel, "service label")
 	flags.StringVar(&options.BinaryPath, "bin", "", "router binary the agent runs (default: $CODEX_MODEL_ROUTER_BIN or ~/.local/lib/codex-model-router/codex-model-router)")
+	flags.StringVar(&options.UnitDir, "unit-dir", "", "systemd user unit directory (default: $XDG_CONFIG_HOME/systemd/user or ~/.config/systemd/user)")
 	flags.StringVar(&options.PlistDir, "plist-dir", "", "LaunchAgents directory (default: ~/Library/LaunchAgents)")
 	flags.StringVar(&options.LogDir, "log-dir", "", "directory for the router's log files (default: ~/Library/Logs/<label>)")
 	flags.StringVar(&options.WorkingDirectory, "working-directory", "", "working directory for the agent process")
-	throttle := flags.Int("throttle-interval", 10, "minimum seconds between launchd restarts")
+	throttle := flags.Int("throttle-interval", 10, "minimum seconds between service restarts")
 	shutdownTimeout := flags.String("shutdown-timeout", "", "pass a grace window to serve, for example 15s")
 	var environment stringList
 	flags.Var(&environment, "env", "extra environment for the agent as KEY=VALUE; repeat for more")
-	force := flags.Bool("force", false, "replace an existing LaunchAgent file")
-	dryRun := flags.Bool("dry-run", false, "report what would happen without writing or calling launchctl")
+	force := flags.Bool("force", false, "replace an existing service definition")
+	dryRun := flags.Bool("dry-run", false, "report what would happen without writing or changing services")
 	if err := parseFlags(flags, rest); err != nil {
 		return err
 	}
@@ -528,13 +531,16 @@ func cmdService(args []string, stdout io.Writer) error {
 			options.BinaryPath = defaultBinary
 		}
 	}
-	if options.PlistDir == "" {
+	if options.Platform == "darwin" && options.UnitDir != "" {
+		return fmt.Errorf("%w: --unit-dir applies only to Linux", errUsage)
+	}
+	if options.Platform == "darwin" && options.PlistDir == "" {
 		options.PlistDir, err = service.DefaultPlistDir()
 		if err != nil {
 			return err
 		}
 	}
-	if options.LogDir == "" {
+	if options.Platform == "darwin" && options.LogDir == "" {
 		options.LogDir, err = service.DefaultLogDir(options.Label)
 		if err != nil {
 			return err
@@ -571,6 +577,10 @@ func cmdService(args []string, stdout io.Writer) error {
 			return err
 		}
 		fmt.Fprint(stdout, rendered)
+		if resolved.UnitPath != "" {
+			fmt.Fprintf(stdout, "# unit path: %s\n# logs: journalctl --user -u %s\n", resolved.UnitPath, filepath.Base(resolved.UnitPath))
+			return nil
+		}
 		fmt.Fprintf(stdout, "# plist path: %s\n# logs: %s and %s\n# domain: %s\n",
 			resolved.PlistPath, resolved.StdOutPath, resolved.StdErrPath, resolved.Domain())
 		return nil

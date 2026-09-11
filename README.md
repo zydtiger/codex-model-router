@@ -7,8 +7,8 @@ self-hosted Responses API models from one Codex model selector.
 
 Implemented: exact model routing, native credential forwarding, isolated remote
 credentials, streaming, request limits, SGLang reasoning adaptation, combined
-catalog generation and macOS
-LaunchAgent lifecycle commands.
+catalog generation and platform service lifecycle commands (macOS LaunchAgent
+and Linux systemd user service).
 
 Validation includes mock upstream tests, race tests, and a real SGLang function
 call/result loop. With Codex CLI 0.153.4, an isolated configuration successfully
@@ -71,7 +71,8 @@ at it, including for native models. See [Codex setup](docs/codex-desktop.md).
 
 For login startup and crash recovery, install a stable copy of the binary and
 use `service preview`, `service install`, `service status`, and `service uninstall`.
-See [launchd setup](docs/launchd.md) for paths and environment handling.
+See [launchd setup](docs/launchd.md) or [systemd setup](docs/systemd.md) for paths
+and environment handling.
 Service configuration belongs to this repository. No Docker container is required.
 
 ## Routing and limits
@@ -122,6 +123,7 @@ to off, and log rotation is not provided.
 - [Configuration reference](docs/configuration.md)
 - [Codex integration](docs/codex-desktop.md)
 - [LaunchAgent lifecycle](docs/launchd.md)
+- [Systemd user service](docs/systemd.md)
 
 Machine-specific `config.local.*` files, binaries, and logs are ignored by Git.
 

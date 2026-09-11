@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -53,6 +54,7 @@ type Step struct {
 
 // Report is the outcome of an install, status, or uninstall call.
 type Report struct {
+	UnitPath  string
 	PlistPath string
 	Steps     []Step
 	Notes     []string
@@ -62,7 +64,11 @@ type Report struct {
 // Describe renders the report for a terminal.
 func (r Report) Describe() string {
 	lines := make([]string, 0, len(r.Steps)+len(r.Notes)+1)
-	lines = append(lines, "LaunchAgent: "+r.PlistPath)
+	if r.UnitPath != "" {
+		lines = append(lines, "systemd user service: "+r.UnitPath)
+	} else {
+		lines = append(lines, "LaunchAgent: "+r.PlistPath)
+	}
 	for _, step := range r.Steps {
 		if step.Skipped {
 			lines = append(lines, "  skipped  "+step.Action+" ("+step.Detail+")")
@@ -101,6 +107,13 @@ func (m *Manager) resolved() (Resolved, error) {
 // Preview renders the plist without touching anything. It is what `service
 // preview` prints and what `service install --dry-run` shows first.
 func (m *Manager) Preview() (string, Resolved, error) {
+	if m.platform() == "linux" {
+		rendered, path, err := m.systemdPreview()
+		return rendered, Resolved{Options: m.Options, UnitPath: path}, err
+	}
+	if m.platform() != "darwin" {
+		return "", Resolved{}, fmt.Errorf("unsupported service platform %q", m.platform())
+	}
 	resolved, err := m.resolved()
 	if err != nil {
 		return "", Resolved{}, err
@@ -118,6 +131,12 @@ func (m *Manager) Preview() (string, Resolved, error) {
 // existing file at the target path is only replaced when it is recognisably this
 // service's own file, or when allowOverwrite is set.
 func (m *Manager) Install(ctx context.Context, dryRun, allowOverwrite bool) (Report, error) {
+	if m.platform() == "linux" {
+		return m.systemdInstall(ctx, dryRun, allowOverwrite)
+	}
+	if m.platform() != "darwin" {
+		return Report{}, fmt.Errorf("unsupported service platform %q", m.platform())
+	}
 	resolved, err := m.resolved()
 	if err != nil {
 		return Report{}, err
@@ -204,6 +223,12 @@ func (m *Manager) Install(ctx context.Context, dryRun, allowOverwrite bool) (Rep
 // router configuration, the catalog, and any Codex config alone: those are user
 // files with their own restore path.
 func (m *Manager) Uninstall(ctx context.Context, dryRun, allowOverwrite bool) (Report, error) {
+	if m.platform() == "linux" {
+		return m.systemdUninstall(ctx, dryRun, allowOverwrite)
+	}
+	if m.platform() != "darwin" {
+		return Report{}, fmt.Errorf("unsupported service platform %q", m.platform())
+	}
 	resolved, err := m.resolved()
 	if err != nil {
 		return Report{}, err
@@ -253,6 +278,12 @@ func (m *Manager) Uninstall(ctx context.Context, dryRun, allowOverwrite bool) (R
 // endpoint. Both signals are reported because a loaded agent is not a healthy
 // router.
 func (m *Manager) Status(ctx context.Context) (Report, error) {
+	if m.platform() == "linux" {
+		return m.systemdStatus(ctx)
+	}
+	if m.platform() != "darwin" {
+		return Report{}, fmt.Errorf("unsupported service platform %q", m.platform())
+	}
 	resolved, err := m.resolved()
 	if err != nil {
 		return Report{}, err
@@ -479,4 +510,11 @@ func formatValue(value any) string {
 	default:
 		return fmt.Sprintf("%v", typed)
 	}
+}
+
+func (m *Manager) platform() string {
+	if m.Options.Platform != "" {
+		return m.Options.Platform
+	}
+	return runtime.GOOS
 }
