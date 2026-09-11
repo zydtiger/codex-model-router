@@ -50,6 +50,7 @@ func testOptions(t *testing.T) Options {
 		t.Fatal(err)
 	}
 	return Options{
+		Platform:   "darwin",
 		Label:      "test.codex-model-router",
 		BinaryPath: binary,
 		ConfigPath: configPath,
