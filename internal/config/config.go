@@ -194,9 +194,8 @@ type CatalogModel struct {
 	Description     string   `json:"description"`
 	ContextWindow   int      `json:"context_window"`
 	InputModalities []string `json:"input_modalities"`
-	// ReasoningLevels are advertised in the picker. An empty list means the
-	// model has no selectable thinking levels.
-	ReasoningLevels []string `json:"reasoning_levels"`
+	// ReasoningLevels are derived from the route supported_efforts during normalization.
+	ReasoningLevels []string `json:"-"`
 	// DefaultReasoningLevel must appear in ReasoningLevels when both are set.
 	DefaultReasoningLevel string                     `json:"default_reasoning_level"`
 	ToolCapable           bool                       `json:"tool_capable"`
@@ -539,8 +538,9 @@ func (c *Config) normalizeCatalog(seenRoutes map[string]bool) error {
 		if model.ContextWindow < 0 {
 			return fmt.Errorf("catalog.models[%d]: context_window must not be negative", i)
 		}
+		model.ReasoningLevels = append([]string(nil), c.routeByName(model.Route).Reasoning.SupportedEfforts...)
 		if model.DefaultReasoningLevel != "" && !containsString(model.ReasoningLevels, model.DefaultReasoningLevel) {
-			return fmt.Errorf("catalog.models[%d]: default_reasoning_level %q is not in reasoning_levels", i, model.DefaultReasoningLevel)
+			return fmt.Errorf("catalog.models[%d]: default_reasoning_level %q is not in route reasoning.supported_efforts", i, model.DefaultReasoningLevel)
 		}
 		for _, modality := range model.InputModalities {
 			if strings.TrimSpace(modality) == "" {

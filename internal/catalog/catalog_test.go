@@ -129,13 +129,12 @@ func TestLocalEntriesInheritNativeShapeAndAddPickerFields(t *testing.T) {
 	      "route": "local",
 	      "display_name": "Qwen3 32B (local)",
 	      "context_window": 131072,
-	      "reasoning_levels": ["none", "low", "medium", "high"],
 	      "default_reasoning_level": "medium",
 	      "tool_capable": true,
 	      "input_modalities": ["text"]
 	    }]
 	  },
-	  "routes": [{"name": "local", "base_url": "http://127.0.0.1:30000/v1", "models": ["qwen3-32b"]}]
+	  "routes": [{"name": "local", "reasoning": {"supported_efforts": ["none", "low", "medium", "high"]}, "base_url": "http://127.0.0.1:30000/v1", "models": ["qwen3-32b"]}]
 	}`)
 
 	entry, ok := bySlug["qwen3-32b"]
@@ -203,7 +202,10 @@ func TestLocalEntriesInheritNativeShapeAndAddPickerFields(t *testing.T) {
 	if len(levels) != 4 {
 		t.Fatalf("supported_reasoning_levels = %d entries, want 4", len(levels))
 	}
-	for _, level := range levels {
+	for i, level := range levels {
+		if want := []string{"none", "low", "medium", "high"}[i]; level["effort"] != want {
+			t.Fatalf("effort[%d] = %q, want %q", i, level["effort"], want)
+		}
 		if level["description"] == "" || level["effort"] == "" {
 			t.Fatalf("reasoning level needs effort and description: %v", level)
 		}
@@ -347,8 +349,8 @@ func TestUnknownReasoningLevelIsRefused(t *testing.T) {
 	_, err := catalog.Build(mustParse(t, `{
 	  "listen": {"host": "127.0.0.1", "port": 0},
 	  "native": {"chatgpt_base_url": "https://native.invalid/b", "api_base_url": "https://api.invalid/v1", "models": ["gpt-5"]},
-	  "catalog": {"models": [{"id": "m", "route": "local", "base_instructions": "x", "reasoning_levels": ["maximal"], "default_reasoning_level": "maximal"}]},
-	  "routes": [{"name": "local", "base_url": "http://127.0.0.1:30000/v1", "models": ["m"]}]
+	  "catalog": {"models": [{"id": "m", "route": "local", "base_instructions": "x", "default_reasoning_level": "maximal"}]},
+	  "routes": [{"name": "local", "reasoning": {"supported_efforts": ["maximal"]}, "base_url": "http://127.0.0.1:30000/v1", "models": ["m"]}]
 	}`))
 	if err == nil || !strings.Contains(err.Error(), "unknown reasoning level") {
 		t.Fatalf("expected an unknown reasoning level refusal, got %v", err)
@@ -359,8 +361,8 @@ func TestReasoningLevelsRequireADefault(t *testing.T) {
 	_, err := catalog.Build(mustParse(t, `{
 	  "listen": {"host": "127.0.0.1", "port": 0},
 	  "native": {"chatgpt_base_url": "https://native.invalid/b", "api_base_url": "https://api.invalid/v1", "models": ["gpt-5"]},
-	  "catalog": {"models": [{"id": "m", "route": "local", "base_instructions": "x", "reasoning_levels": ["low", "high"]}]},
-	  "routes": [{"name": "local", "base_url": "http://127.0.0.1:30000/v1", "models": ["m"]}]
+	  "catalog": {"models": [{"id": "m", "route": "local", "base_instructions": "x"}]},
+	  "routes": [{"name": "local", "reasoning": {"supported_efforts": ["low", "high"]}, "base_url": "http://127.0.0.1:30000/v1", "models": ["m"]}]
 	}`))
 	if err == nil || !strings.Contains(err.Error(), "default_reasoning_level") {
 		t.Fatalf("expected a default-level error, got %v", err)
@@ -536,11 +538,10 @@ func TestDisplayNameIsIndependentFromRoutingSlug(t *testing.T) {
 	      "id": "`+routingID+`",
 	      "route": "sglang",
 	      "display_name": "`+pickerLabel+`",
-	      "reasoning_levels": ["none", "low", "high"],
 	      "default_reasoning_level": "none"
 	    }]
 	  },
-	  "routes": [{"name": "sglang", "base_url": "http://127.0.0.1:4011/v1", "models": ["`+routingID+`"]}]
+	  "routes": [{"name": "sglang", "reasoning": {"supported_efforts": ["none", "low", "high"]}, "base_url": "http://127.0.0.1:4011/v1", "models": ["`+routingID+`"]}]
 	}`)
 
 	entry, ok := bySlug[routingID]
@@ -692,5 +693,22 @@ func TestUnreadableBaseInstructionsFileStopsGeneration(t *testing.T) {
 	}
 	if instructions != "Instructions from the configured file." {
 		t.Fatalf("base_instructions = %q, want the configured file's content, trimmed", instructions)
+	}
+}
+
+func TestLegacyCatalogReasoningLevelsAreRejected(t *testing.T) {
+	_, err := config.Parse([]byte(`{"catalog":{"models":[{"id":"m","route":"local","reasoning_levels":["low"]}]}}`))
+	if err == nil || !strings.Contains(err.Error(), `unknown field "reasoning_levels"`) {
+		t.Fatalf("expected removed field to be rejected, got %v", err)
+	}
+}
+
+func TestDefaultMustBelongToRouteEfforts(t *testing.T) {
+	_, err := config.Parse([]byte(`{
+ "routes":[{"name":"local","base_url":"http://127.0.0.1:4011/v1","models":["m"],"reasoning":{"supported_efforts":["none","low","medium","xhigh"]}}],
+ "catalog":{"models":[{"id":"m","route":"local","default_reasoning_level":"high"}]}
+ }`))
+	if err == nil || !strings.Contains(err.Error(), "not in route reasoning.supported_efforts") {
+		t.Fatalf("expected route/default mismatch to be rejected, got %v", err)
 	}
 }

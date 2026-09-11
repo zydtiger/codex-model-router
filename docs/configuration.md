@@ -63,7 +63,6 @@ error messages:
         "description": "Self-hosted on the lab GPU box",
         "context_window": 131072,
         "input_modalities": ["text"],
-        "reasoning_levels": ["none", "low", "medium", "high"],
         "default_reasoning_level": "medium",
         "tool_capable": true,
         "base_instructions": "",
@@ -321,11 +320,14 @@ refuses to write the file.
 | `catalog.models`                  | `[]`    | The self-hosted entries                                       |
 
 Each entry in `catalog.models` needs `id` and `route`. `display_name`,
-`context_window`, `reasoning_levels`, `default_reasoning_level`, `tool_capable`,
+`context_window`, `default_reasoning_level`, `tool_capable`,
 `priority`, `description`, and `base_instructions` are described in
 [the README](../README.md#model-catalog). `route` must name one of `routes[]`,
 which is what ties picker entry to upstream. `id` must not also appear in
-`native.models`. `reasoning_levels` are checked against `none`, `minimal`, `low`,
+`native.models`. Picker reasoning levels come from the route’s
+`reasoning.supported_efforts`, in the declared order. Declare that list once for
+both request validation and catalog generation; the former catalog model field
+`reasoning_levels` is no longer accepted. Levels are checked against `none`, `minimal`, `low`,
 `medium`, `high`, and `xhigh`, and `default_reasoning_level` must be one of them;
 `extra_fields` merges arbitrary keys into the entry for a server that needs
 something this program does not model.

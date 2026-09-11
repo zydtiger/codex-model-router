@@ -376,9 +376,6 @@ func localEntry(model config.CatalogModel, template map[string]json.RawMessage, 
 		return nil, fmt.Errorf("catalog.models: %q has no base_instructions and the native catalog provided none", model.ID)
 	}
 	levels := model.ReasoningLevels
-	if len(levels) == 0 && model.DefaultReasoningLevel != "" {
-		levels = []string{model.DefaultReasoningLevel}
-	}
 	for _, level := range levels {
 		if !isKnownEffort(level) {
 			return nil, fmt.Errorf("catalog.models: %q advertises unknown reasoning level %q", model.ID, level)

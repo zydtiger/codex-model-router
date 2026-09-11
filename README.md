@@ -46,7 +46,10 @@ Edit `config.local.json` before proceeding:
   For example, `Qwen-3.8 Flash Next` can label
   `nvidia/Qwen3.8-Flash-Next-NVFP4`.
 - Supply `base_instructions` or `catalog.base_instructions_file` when your native
-  catalog has no instructions to inherit. Match reasoning settings to the server.
+  catalog has no instructions to inherit. Set `routes[].reasoning.supported_efforts`
+  once for the SGLang adapter and the generated picker options. Set each catalog
+  model’s `default_reasoning_level` to a member of that list. Remove the former
+  `catalog.models[].reasoning_levels` field when upgrading.
 
 ```sh
 codex-model-router validate --config config.local.json

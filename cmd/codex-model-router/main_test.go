@@ -101,7 +101,6 @@ func newWorkspace(t *testing.T) *workspace {
       "route": "sglang",
       "display_name": "Qwen3 32B (lab)",
       "context_window": 131072,
-      "reasoning_levels": ["none", "low", "medium", "high"],
       "default_reasoning_level": "medium",
       "tool_capable": true
     }]
@@ -112,6 +111,7 @@ func newWorkspace(t *testing.T) *workspace {
     "models": ["qwen3-32b"],
     "reasoning": {
       "adapter": "sglang_chat_template",
+      "supported_efforts": ["none", "low", "medium", "high"],
       "chat_template_kwargs": {
         "enable_thinking": {"none": false, "low": true, "medium": true, "high": true},
         "reasoning_effort": {"none": null, "low": "low", "medium": "medium", "high": "high"},
