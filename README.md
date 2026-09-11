@@ -138,7 +138,9 @@ go test -race -timeout 60s ./...
 
 Pass new, untracked paths explicitly with `prek run --files <paths>` in both
 stages until they are staged. Normal tests use local mocks and require no accounts.
-See [AGENTS.md](AGENTS.md) for repository conventions.
+See [AGENTS.md](AGENTS.md) for repository conventions. CI covers Ubuntu and macOS.
+See [service verification](docs/service-verification.md) for the opt-in real
+service-manager test.
 
 ## Releases
 
