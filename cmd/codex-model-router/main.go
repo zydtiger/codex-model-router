@@ -1,11 +1,5 @@
 // Command codex-model-router runs a loopback proxy that lets one Codex session use
 // OpenAI models and self-hosted models side by side.
-//
-// Every subcommand is safe to re-run. Only two of them write anything:
-// 'catalog generate' writes the catalog file it is pointed at, and
-// 'codex-config apply --confirm' edits the Codex configuration after keeping a
-// backup. 'service install' is the only subcommand that talks to launchctl, and it
-// never uses sudo.
 package main
 
 import (
@@ -27,7 +21,6 @@ import (
 	"time"
 
 	"github.com/zydtiger/codex-model-router/internal/catalog"
-	"github.com/zydtiger/codex-model-router/internal/codexcfg"
 	"github.com/zydtiger/codex-model-router/internal/config"
 	"github.com/zydtiger/codex-model-router/internal/routing"
 	"github.com/zydtiger/codex-model-router/internal/serve"
@@ -68,8 +61,6 @@ func run(args []string, stdout, stderr io.Writer) int {
 		err = cmdValidate(rest, stdout)
 	case "catalog":
 		err = cmdCatalog(rest, stdout)
-	case "codex-config":
-		err = cmdCodexConfig(rest, stdout)
 	case "service":
 		err = cmdService(rest, stdout)
 	case "healthcheck":
@@ -116,10 +107,6 @@ Commands:
   validate                  Check a configuration without opening a port
   catalog generate          Merge native and self-hosted models into a catalog JSON
   catalog print-example     Print a starting-point configuration
-  codex-config plan         Show the Codex configuration change without writing it
-  codex-config apply        Write the change; requires --confirm
-  codex-config restore      Put back the backup that apply kept
-  codex-config snippet      Print the two pointers as TOML for manual editing
   service preview           Print the LaunchAgent that would be written
   service install           Install and start the LaunchAgent (macOS, no sudo)
   service status            Report the LaunchAgent state and router health
@@ -405,7 +392,7 @@ func cmdValidate(args []string, stdout io.Writer) error {
 	describeRoutes(stdout, cfg, cfg.Addr())
 	fmt.Fprintf(stdout, "  catalog          %s\n", catalogState)
 	if cfg.Listen.Port == 0 {
-		fmt.Fprintln(stdout, "  note             listen.port is 0, so a random port is chosen at start-up; codex-config needs a fixed port or --base-url")
+		fmt.Fprintln(stdout, "  note             listen.port is 0, so a random port is chosen at start-up; use a fixed port when configuring Codex")
 	}
 	return nil
 }
@@ -471,7 +458,7 @@ func cmdCatalog(args []string, stdout io.Writer) error {
 			return emitBytes(stdout, data, "")
 		}
 		fmt.Fprintf(stdout, "wrote %s (%d model entries)\n", destination, entries)
-		fmt.Fprintf(stdout, "next: codex-model-router codex-config apply --confirm --catalog %s\n", destination)
+		fmt.Fprintf(stdout, "Set model_catalog_json in your Codex configuration to %q; see docs/codex-desktop.md.\n", destination)
 		return nil
 	default:
 		return fmt.Errorf("%w: unknown catalog subcommand %q", errUsage, subcommand)
@@ -488,122 +475,6 @@ func emitBytes(stdout io.Writer, data []byte, out string) error {
 	}
 	fmt.Fprintf(stdout, "wrote %s\n", out)
 	return nil
-}
-
-// cmdCodexConfig plans, applies, and reverts the Codex configuration change.
-func cmdCodexConfig(args []string, stdout io.Writer) error {
-	if len(args) == 0 {
-		return fmt.Errorf("%w: codex-config needs plan, apply, restore, or snippet", errUsage)
-	}
-	subcommand, rest := args[0], args[1:]
-	flags := flag.NewFlagSet("codex-config "+subcommand, flag.ContinueOnError)
-	configPath := registerConfigFlag(flags)
-	codexPath := flags.String("codex-config", "", "Codex configuration file (default: $CODEX_CONFIG_PATH or ~/.codex/config.toml)")
-	catalogPath := flags.String("catalog", "", "combined catalog JSON (default: catalog.output_file in the router configuration)")
-	baseURL := flags.String("base-url", "", "router URL Codex should be pointed at (default: the configured listen address plus base_path)")
-	confirm := flags.Bool("confirm", false, "required for apply: write the file instead of only reporting the plan")
-	if err := parseFlags(flags, rest); err != nil {
-		return err
-	}
-	if flags.NArg() > 0 {
-		return fmt.Errorf("%w: codex-config %s takes no positional arguments", errUsage, subcommand)
-	}
-
-	target, err := resolveCodexConfigPath(*codexPath)
-	if err != nil {
-		return err
-	}
-
-	if subcommand == "restore" {
-		backup := codexcfg.BackupPath(target)
-		if err := codexcfg.Restore(target, backup); err != nil {
-			return err
-		}
-		fmt.Fprintf(stdout, "restored %s from %s\n", target, backup)
-		return nil
-	}
-
-	desired := codexcfg.Desired{ModelCatalogJSON: *catalogPath, OpenAIBaseURL: *baseURL}
-	switch subcommand {
-	case "plan", "apply", "snippet":
-		if desired.OpenAIBaseURL == "" || desired.ModelCatalogJSON == "" {
-			cfg, _, err := loadConfig(*configPath)
-			if err != nil {
-				return err
-			}
-			if desired.OpenAIBaseURL == "" {
-				if cfg.Listen.Port == 0 {
-					return fmt.Errorf("%w: listen.port is 0, so there is no stable URL to advertise; pass --base-url or set a fixed listen.port", errUsage)
-				}
-				desired.OpenAIBaseURL = cfg.BaseURL()
-			}
-			if desired.ModelCatalogJSON == "" {
-				desired.ModelCatalogJSON = cfg.Catalog.OutputFile
-			}
-		}
-		if desired.ModelCatalogJSON == "" {
-			return fmt.Errorf("%w: no catalog path; pass --catalog or set catalog.output_file", errUsage)
-		}
-		absolute, err := filepath.Abs(desired.ModelCatalogJSON)
-		if err != nil {
-			return err
-		}
-		if _, err := os.Stat(absolute); err != nil {
-			return fmt.Errorf("the catalog file %s is not readable; run 'codex-model-router catalog generate' first: %w", absolute, err)
-		}
-		desired.ModelCatalogJSON = absolute
-		if err := desired.Validate(); err != nil {
-			return fmt.Errorf("%w: %v", errUsage, err)
-		}
-
-		if subcommand == "snippet" {
-			fmt.Fprint(stdout, codexcfg.Snippet(desired))
-			return nil
-		}
-		plan, err := codexcfg.BuildPlan(target, desired)
-		if err != nil {
-			return err
-		}
-		fmt.Fprint(stdout, plan.Describe())
-		if subcommand == "plan" {
-			if !plan.AlreadyCurrent {
-				fmt.Fprint(stdout, "\nNothing was written. Re-run with 'codex-config apply --confirm'.\n")
-			}
-			return nil
-		}
-		backup, err := codexcfg.Apply(plan, *confirm)
-		if backup != "" {
-			fmt.Fprintf(stdout, "backup kept at %s\n", backup)
-		}
-		if err != nil {
-			if errors.Is(err, codexcfg.ErrConfirmationRequired) {
-				return fmt.Errorf("%w: %v", errUsage, err)
-			}
-			return err
-		}
-		if plan.AlreadyCurrent {
-			return nil
-		}
-		fmt.Fprint(stdout, "\nRestart Codex to load the new catalog.\n")
-		return nil
-	default:
-		return fmt.Errorf("%w: unknown codex-config subcommand %q", errUsage, subcommand)
-	}
-}
-
-// resolveCodexConfigPath finds the Codex configuration file.
-func resolveCodexConfigPath(explicit string) (string, error) {
-	if explicit != "" {
-		return filepath.Abs(explicit)
-	}
-	if fromEnv := os.Getenv("CODEX_CONFIG_PATH"); fromEnv != "" {
-		return filepath.Abs(fromEnv)
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", fmt.Errorf("no home directory; pass --codex-config: %w", err)
-	}
-	return filepath.Join(home, ".codex", "config.toml"), nil
 }
 
 // cmdService previews and manages the launchd LaunchAgent.

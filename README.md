@@ -7,7 +7,7 @@ self-hosted Responses API models from one Codex model selector.
 
 Implemented: exact model routing, native credential forwarding, isolated remote
 credentials, streaming, request limits, SGLang reasoning adaptation, combined
-catalog generation, explicit Codex config edits with backup/restore, and macOS
+catalog generation and macOS
 LaunchAgent lifecycle commands.
 
 Validation includes mock upstream tests, race tests, and a real SGLang function
@@ -55,18 +55,19 @@ codex -c 'model_catalog_json="/absolute/path/config.local.catalog.json"' debug m
 codex-model-router serve --config config.local.json
 ```
 
-With the router running, preview the Codex edit in another terminal:
+With the router running, edit the active Codex configuration yourself or ask your
+agent to do it. Back up the file and review the diff. Set these root keys:
 
-```sh
-codex-model-router codex-config plan --config config.local.json
-codex-model-router codex-config apply --config config.local.json --confirm
+```toml
+openai_base_url = "http://127.0.0.1:4317/v1"
+model_catalog_json = "/absolute/path/config.local.catalog.json"
 ```
 
-The edit sets root `openai_base_url` and `model_catalog_json` and removes a root
-custom `model_provider` if present; inspect the plan first. A backup is written
-before replacement. Pass `--codex-config` when targeting a non-default Codex
-configuration. Restart Codex to reload the catalog, then select the model.
-Keep the router running while Codex points at it, including for native models.
+Use the actual listener URL and absolute catalog path. For native authentication,
+remove a root custom `model_provider` override if present, preserving unrelated
+settings. The router does not edit Codex configuration or manage its backups.
+Restart Codex to reload the catalog. Keep the router running while Codex points
+at it, including for native models. See [Codex setup](docs/codex-desktop.md).
 
 For login startup and crash recovery, install a stable copy of the binary and
 use `service preview`, `service install`, `service status`, and `service uninstall`.

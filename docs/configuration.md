@@ -116,18 +116,9 @@ error messages:
 `host: "localhost"` is accepted and resolves to loopback. `::1` binds the IPv6
 loopback. A LAN address is rejected at load time and again after `bind()`.
 
-A port of `0` means `codex-config` has nothing stable to advertise, so
-`codex-config plan` refuses to run unless you pass `--base-url`, and
-`healthcheck` needs `--port`. Use a fixed port for anything installed as a
-service.
-
-`--base-url` has to name this router, so it is checked rather than trusted: the scheme
-must be `http`, the host must be a loopback literal (`localhost`, `127.0.0.1`, `::1`),
-and the port must be a real number in range. A hostname that resolves elsewhere, an
-`https` URL, a missing or out-of-range port, and embedded credentials are all refused,
-because writing any of them into `~/.codex/config.toml` would silently redirect every
-model Codex sends. `model_catalog_json` must be an absolute path, since Codex resolves
-a relative one against its own working directory.
+A port of `0` chooses a random port; `healthcheck` then needs `--port`.
+Use a fixed port for a service and for the URL configured in Codex. The router
+does not validate or edit Codex's TOML file; see [Codex setup](codex-desktop.md).
 
 ## `base_path`
 
@@ -346,12 +337,12 @@ native model.
 
 - The router reads only the file it is pointed at. It never writes to its own
   configuration. `catalog print-example` writes a new example; catalog generation,
-  Codex apply/restore, and service install/uninstall also write their target files.
+  and service install/uninstall also write their target files.
 - Configuration carries environment variable *names*, never secret values. The
   values come from the process environment, which under launchd means the plist
   (see [launchd](launchd.md)).
 - `catalog.native_catalog_file`, `catalog.output_file`,
-  `catalog.base_instructions_file`, and `codex-config` paths are expanded
+  and `catalog.base_instructions_file` paths are expanded
   (`~`) and resolved relative to the configuration file's directory, and
   `codex-model-router validate` prints them absolute. `catalog.output_file` must
   be an absolute path, because Codex has to read it from wherever it runs.
@@ -375,13 +366,10 @@ until the new file is fully written. `service install` overwrites the plist only
 if the existing file was written by this tool, otherwise it refuses without
 `--force`.
 
-Roll the Codex side back with `codex-model-router codex-config restore`, which
-puts back the backup `apply` kept, and stop the service with
-`codex-model-router service uninstall`. Both name the exact paths they touch
-before they touch them, and `uninstall` leaves your router configuration and
-generated catalog alone. A stale `openai_base_url` pointing at a router that is no
-longer running is the usual failure mode; run `codex-model-router validate` and
-then `healthcheck`, or restore and restart Codex.
+Undo the Codex configuration changes manually or through your agent, preserving
+unrelated edits, and restart Codex before stopping the router. Then use
+`codex-model-router service uninstall` to remove its LaunchAgent. Uninstall leaves
+router configuration and catalogs alone. See [rollback](codex-desktop.md#rollback).
 
 ## Use an HTTP proxy you control
 
