@@ -50,6 +50,7 @@ func testOptions(t *testing.T) Options {
 		t.Fatal(err)
 	}
 	return Options{
+		Platform:   "darwin",
 		Label:      "test.codex-model-router",
 		BinaryPath: binary,
 		ConfigPath: configPath,
@@ -715,4 +716,65 @@ func indexOfCommand(commands [][]string, needle string) int {
 		}
 	}
 	return -1
+}
+
+type bootstrapRunner struct {
+	attempts int
+	failures int
+	failure  error
+}
+
+func (r *bootstrapRunner) Run(_ context.Context, name string, args ...string) ([]byte, error) {
+	if name == "launchctl" && args[0] == "bootstrap" {
+		r.attempts++
+		if r.attempts <= r.failures {
+			return nil, r.failure
+		}
+	}
+	return nil, nil
+}
+
+func TestBootstrapRetriesTransientEIO(t *testing.T) {
+	r := &bootstrapRunner{failures: 1, failure: errors.New("Bootstrap failed: 5: Input/output error")}
+	m := &Manager{Options: testOptions(t), Runner: r}
+	if _, err := m.Install(context.Background(), false, false); err != nil {
+		t.Fatal(err)
+	}
+	if r.attempts != 2 {
+		t.Fatalf("bootstrap attempts=%d", r.attempts)
+	}
+}
+
+func TestBootstrapDoesNotRetryOtherFailures(t *testing.T) {
+	r := &bootstrapRunner{failures: 10, failure: errors.New("Bootstrap failed: 1: Operation not permitted")}
+	m := &Manager{Options: testOptions(t), Runner: r}
+	if _, err := m.Install(context.Background(), false, false); err == nil {
+		t.Fatal("failure hidden")
+	}
+	if r.attempts != 1 {
+		t.Fatalf("bootstrap attempts=%d", r.attempts)
+	}
+}
+
+func TestBootstrapRetryIsBoundedAndCancelable(t *testing.T) {
+	r := &bootstrapRunner{failures: 10, failure: errors.New("Bootstrap failed: 5: Input/output error")}
+	m := &Manager{Options: testOptions(t), Runner: r}
+	resolved, err := m.resolved()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := m.bootstrap(ctx, resolved); !errors.Is(err, context.Canceled) {
+		t.Fatal(err)
+	}
+	if r.attempts != 0 {
+		t.Fatal("canceled context invoked launchctl")
+	}
+	if err := m.bootstrap(context.Background(), resolved); err == nil {
+		t.Fatal("persistent failure hidden")
+	}
+	if r.attempts != 5 {
+		t.Fatalf("bootstrap attempts=%d", r.attempts)
+	}
 }

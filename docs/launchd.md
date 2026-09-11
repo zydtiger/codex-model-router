@@ -43,8 +43,10 @@ Those are the argument shapes launchctl itself accepts: `bootout`, `kickstart`, 
 `print` take one service target, `gui/<uid>/<label>`, while `bootstrap` takes a domain
 target plus a plist path. A `bootout` that fails because nothing was loaded is a note;
 any other failure stops the install before the plist is written. If `bootstrap` fails
-the plist is left in place so you can read it and retry, and the command exits
-non-zero.
+the installer retries the observed transient `Bootstrap failed: 5: Input/output error`
+response up to five total attempts with bounded backoff. Other errors fail immediately.
+If loading still fails, the plist is left in place for inspection and retry, and
+the command exits non-zero.
 
 Flags: `--label`, `--bin`, `--config`, `--plist-dir`, `--log-dir`,
 `--working-directory`, `--throttle-interval`, `--shutdown-timeout`,
@@ -121,16 +123,7 @@ changes yourself or through your agent and restart Codex; see
 
 ## Other platforms
 
-macOS is the only platform with an installer here. On Linux, run `serve` under
-your own supervisor and follow [Codex setup](codex-desktop.md) for manual configuration:
-
-```ini
-[Service]
-ExecStart=/usr/local/bin/codex-model-router serve --config /etc/codex-model-router/config.json
-Restart=always
-```
-
-Keep it bound to loopback. The router refuses a non-loopback `listen.host` at
-load time and again after `bind()`, and it checks every peer address, so a
-systemd unit cannot accidentally expose it. If you need it reachable from
-elsewhere, put it behind a proxy you control and authenticate there.
+Linux uses a systemd user service through the same CLI commands. See
+[systemd setup](systemd.md). macOS keeps stdout/stderr files under
+`~/Library/Logs/<label>/`; Linux uses journald. There is no automatic rotation
+for macOS log files.
