@@ -1,5 +1,4 @@
-# Minimal single-version baseline. Add a matrix or artifact smoke test only when
-# the repository's support and distribution contracts require them.
+# Validate both supported service platforms with the same hook contract.
 name: CI
 
 on:
@@ -18,7 +17,11 @@ concurrency:
 
 jobs:
   check:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 15
     steps:
       - name: Check out repository
