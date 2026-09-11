@@ -43,8 +43,10 @@ Those are the argument shapes launchctl itself accepts: `bootout`, `kickstart`, 
 `print` take one service target, `gui/<uid>/<label>`, while `bootstrap` takes a domain
 target plus a plist path. A `bootout` that fails because nothing was loaded is a note;
 any other failure stops the install before the plist is written. If `bootstrap` fails
-the plist is left in place so you can read it and retry, and the command exits
-non-zero.
+the installer retries the observed transient `Bootstrap failed: 5: Input/output error`
+response up to five total attempts with bounded backoff. Other errors fail immediately.
+If loading still fails, the plist is left in place for inspection and retry, and
+the command exits non-zero.
 
 Flags: `--label`, `--bin`, `--config`, `--plist-dir`, `--log-dir`,
 `--working-directory`, `--throttle-interval`, `--shutdown-timeout`,
