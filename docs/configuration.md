@@ -281,6 +281,61 @@ efforts you map to `false`.
 
 ## `routes[].input`
 
+### Namespace tools on SGLang routes
+
+Routes using `reasoning.adapter: "sglang_chat_template"` also translate
+Responses `namespace` tool groups into top-level `function` tools. This handles
+SGLang versions whose Responses-to-chat conversion skips namespace groups,
+making grouped MCP tools invisible even when their servers are connected.
+No additional configuration is needed for those routes.
+
+The adapter initially sends core top-level tools and a compact namespace
+directory through a synthetic `router_load_tools` function. The model selects
+one to eight namespace names; the router handles this schema-only call locally,
+adds just those groups' function definitions, and continues the upstream
+response. It never executes real tools: those still return to Codex with its
+normal execution and approval boundaries. Loader calls and their results are
+not exposed as executable calls to Codex.
+
+Previously used groups are recovered from replayed function-call history.
+Explicit `tool_choice` selections are loaded immediately, and `none` prevents
+loader calls. Invalid selections return an internal error result so the model
+can correct the names; there is no fallback that exposes the entire inventory.
+At most four internal follow-up requests are allowed. New groups can require
+an extra model pass; already-used groups do not require reloading. If a response
+mixes loader and real calls, the real calls return immediately to Codex and the
+loader calls are omitted; the next request can select additional groups again.
+
+The adapter preserves parameter schemas and namespace/function descriptions.
+Ordinary names become `<namespace>__<function>`. Collisions and names longer
+than 64 bytes use short request-local aliases. The router restores the original
+`name` and `namespace` in JSON responses and SSE function-call events, and maps
+namespaced calls in replayed history and explicit `tool_choice` selectors back
+to the upstream aliases. Call IDs, argument strings, and tool results are
+preserved. Mapping state is isolated per request, including concurrent requests.
+
+Only function children are supported; other namespace children return `400`
+instead of silently disappearing. Native routes and other adapters keep their
+existing tool representation. This implements router-managed schema discovery,
+not OpenAI's native `tool_search` protocol. It does not add vision, code-mode or
+remote-compaction support to a model.
+
+Disclosure requires full replayed input, as used by Codex. Requests with
+`previous_response_id` or `conversation` return `400`, because provider-managed
+history cannot safely represent the router's hidden loading steps. Input-token
+usage reports the last upstream pass's context size, rather than summing input
+across loading passes and falsely triggering compaction. Output-token usage
+includes every pass, and an explicit `max_output_tokens` budget is reduced
+before each follow-up. Missing usage under that explicit budget stops discovery.
+
+Adapted responses request identity encoding. JSON responses and individual SSE
+events are bounded by `max_request_bytes`; the complete SSE stream is not
+buffered. An invalid or oversized response fails with `502` before headers are
+sent, or aborts an already-started stream. Initial upstream error responses pass
+through; a failed internal follow-up produces `502` or aborts an active stream.
+
+### Input item policies
+
 Codex sends conversation state that a generic server cannot interpret. Each
 policy is `drop` or `reject`, and `reject` returns `400` naming the item type. A
 drop logs a warning the first time it happens.

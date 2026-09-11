@@ -6,9 +6,15 @@ self-hosted Responses API models from one Codex model selector.
 ## Status
 
 Implemented: exact model routing, native credential forwarding, isolated remote
-credentials, streaming, request limits, SGLang reasoning adaptation, combined
+credentials, streaming, request limits, SGLang reasoning and namespace-tool adaptation, combined
 catalog generation and platform service lifecycle commands (macOS LaunchAgent
 and Linux systemd user service).
+
+For `sglang_chat_template` routes, a compact namespace directory lets the model
+load only needed groups of function schemas, instead of receiving the full MCP
+inventory on every request. Function-call responses and
+replayed history retain Codex's namespace identities across JSON and SSE.
+See [namespace tools](docs/configuration.md#namespace-tools-on-sglang-routes).
 
 Validation includes mock upstream tests, race tests, and a real SGLang function
 call/result loop. With Codex CLI 0.153.4, an isolated configuration successfully
