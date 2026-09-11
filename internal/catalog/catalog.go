@@ -105,6 +105,9 @@ func Build(cfg *config.Config) ([]byte, error) {
 			if nativeSlugs[key] {
 				return nil, fmt.Errorf("native catalog models[%d]: duplicate slug %q", index, slug)
 			}
+			if _, remote := cfg.RouteFor(slug); remote {
+				return nil, fmt.Errorf("route replaces a native model %q", slug)
+			}
 			nativeSlugs[key] = true
 			if len(template) == 0 && usableTemplate(fields) {
 				template = fields
@@ -376,9 +379,6 @@ func localEntry(model config.CatalogModel, template map[string]json.RawMessage, 
 		return nil, fmt.Errorf("catalog.models: %q has no base_instructions and the native catalog provided none", model.ID)
 	}
 	levels := model.ReasoningLevels
-	if len(levels) == 0 && model.DefaultReasoningLevel != "" {
-		levels = []string{model.DefaultReasoningLevel}
-	}
 	for _, level := range levels {
 		if !isKnownEffort(level) {
 			return nil, fmt.Errorf("catalog.models: %q advertises unknown reasoning level %q", model.ID, level)

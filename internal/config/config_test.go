@@ -298,31 +298,38 @@ func TestCatalogEntriesMustReferenceAConfiguredRoute(t *testing.T) {
 	}
 }
 
-func TestCatalogNativeCollisionIsRefused(t *testing.T) {
+func TestRuntimeCatalogImportsOnlyNonRemoteModels(t *testing.T) {
 	directory := t.TempDir()
-	native := filepath.Join(directory, "native.json")
-	if err := os.WriteFile(native, []byte(`{"models":[{"slug":"gpt-5"},{"slug":"gpt-4"}]}`), 0o600); err != nil {
+	combined := filepath.Join(directory, "combined.json")
+	if err := os.WriteFile(combined, []byte(`{"models":[{"slug":"gpt-4"},{"slug":"qwen3"}]}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	text := strings.Replace(minimal(t), `"listen"`, `"catalog": {"native_catalog_file": "`+filepath.ToSlash(native)+`"}, "listen"`, 1)
+	text := strings.Replace(minimal(t), `"listen"`, `"catalog": {"native_catalog_file":"/nonexistent/native.json","output_file": "`+filepath.ToSlash(combined)+`"}, "listen"`, 1)
 	cfg := parse(t, text)
-	if !cfg.IsNativeModel("gpt-4") {
-		t.Fatalf("native ids from the catalog should be allowed: %v", cfg.NativeModelIDs())
+	if err := cfg.LoadRuntimeCatalog(); err != nil {
+		t.Fatal(err)
 	}
-
-	// Routing a model that the native catalog says is native would shadow a bundled
-	// model, so it is refused.
-	clash := strings.Replace(text, `"models": ["qwen3"]`, `"models": ["gpt-4"]`, 1)
-	if message := parseError(t, clash); !strings.Contains(message, "also routed remotely") {
-		t.Fatalf("error = %s", message)
+	if !cfg.IsNativeModel("gpt-4") || cfg.IsNativeModel("qwen3") || cfg.IsNativeModel("unknown") {
+		t.Fatalf("unexpected native IDs: %v", cfg.NativeModelIDs())
+	}
+	disabled := parse(t, strings.Replace(text, `"catalog": {`, `"catalog": {"native_model_ids_from_catalog":false,`, 1))
+	if err := disabled.LoadRuntimeCatalog(); err != nil {
+		t.Fatal(err)
+	}
+	if disabled.IsNativeModel("gpt-4") {
+		t.Fatal("disabled import added a native model")
 	}
 }
 
-func TestCatalogNativeFileMustExist(t *testing.T) {
-	text := strings.Replace(minimal(t), `"listen"`, `"catalog": {"native_catalog_file": "/nonexistent/native.json"}, "listen"`, 1)
-	if message := parseError(t, text); !strings.Contains(message, "native_catalog_file") {
-		t.Fatalf("error = %s", message)
+func TestMissingRuntimeCatalogIsRefused(t *testing.T) {
+	cfg := parse(t, strings.Replace(minimal(t), `"listen"`, `"catalog": {"output_file":"/nonexistent/combined.json"}, "listen"`, 1))
+	if err := cfg.LoadRuntimeCatalog(); err == nil || !strings.Contains(err.Error(), "catalog.output_file") {
+		t.Fatalf("expected missing combined catalog error, got %v", err)
 	}
+}
+
+func TestNativeCatalogIsNotReadDuringConfiguration(t *testing.T) {
+	parse(t, strings.Replace(minimal(t), `"listen"`, `"catalog": {"native_catalog_file": "/nonexistent/native.json"}, "listen"`, 1))
 }
 
 func TestDuplicateNativeModelEntriesAreIgnored(t *testing.T) {

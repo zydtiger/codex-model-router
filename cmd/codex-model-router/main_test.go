@@ -19,6 +19,7 @@ import (
 
 	"io"
 
+	"github.com/zydtiger/codex-model-router/internal/catalog"
 	"github.com/zydtiger/codex-model-router/internal/config"
 	"github.com/zydtiger/codex-model-router/internal/routing"
 	"github.com/zydtiger/codex-model-router/internal/serve"
@@ -102,7 +103,6 @@ func newWorkspace(t *testing.T) *workspace {
       "route": "sglang",
       "display_name": "Qwen3 32B (lab)",
       "context_window": 131072,
-      "reasoning_levels": ["none", "low", "medium", "high"],
       "default_reasoning_level": "medium",
       "tool_capable": true
     }]
@@ -113,6 +113,7 @@ func newWorkspace(t *testing.T) *workspace {
     "models": ["qwen3-32b"],
     "reasoning": {
       "adapter": "sglang_chat_template",
+      "supported_efforts": ["none", "low", "medium", "high"],
       "chat_template_kwargs": {
         "enable_thinking": {"none": false, "low": true, "medium": true, "high": true},
         "reasoning_effort": {"none": null, "low": "low", "medium": "medium", "high": "high"},
@@ -372,6 +373,17 @@ func TestHealthcheckAgainstALiveRouter(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if _, _, err := catalog.Generate(cfg, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(cfg.Catalog.NativeCatalogFile); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err = config.Load(work.configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	router, err := routing.New(cfg, routing.Options{Logger: newLogger(cfg, "error", os.Stderr), Env: os.LookupEnv})
 	if err != nil {
 		t.Fatal(err)

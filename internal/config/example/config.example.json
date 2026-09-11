@@ -64,7 +64,6 @@
         "display_name": "Qwen3 32B (local)",
         "context_window": 131072,
         "input_modalities": ["text"],
-        "reasoning_levels": ["none", "low", "medium", "high"],
         "default_reasoning_level": "medium",
         "tool_capable": true
       }

@@ -140,6 +140,9 @@ func New(cfg *config.Config, options Options) (*Router, error) {
 	if cfg == nil {
 		return nil, errors.New("routing: configuration is required")
 	}
+	if err := cfg.LoadRuntimeCatalog(); err != nil {
+		return nil, err
+	}
 	logger := options.Logger
 	if logger == nil {
 		logger = slog.New(slog.NewTextHandler(io.Discard, nil))

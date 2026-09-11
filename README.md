@@ -46,7 +46,10 @@ Edit `config.local.json` before proceeding:
   For example, `Qwen-3.8 Flash Next` can label
   `nvidia/Qwen3.8-Flash-Next-NVFP4`.
 - Supply `base_instructions` or `catalog.base_instructions_file` when your native
-  catalog has no instructions to inherit. Match reasoning settings to the server.
+  catalog has no instructions to inherit. Set `routes[].reasoning.supported_efforts`
+  once for the SGLang adapter and the generated picker options. Set each catalog
+  model’s `default_reasoning_level` to a member of that list. Remove the former
+  `catalog.models[].reasoning_levels` field when upgrading.
 
 ```sh
 codex-model-router validate --config config.local.json
@@ -78,8 +81,14 @@ Service configuration belongs to this repository. No Docker container is require
 ## Routing and limits
 
 Configured remote model IDs go to their assigned upstream. Explicit native IDs,
-including IDs imported from the native catalog, go to the native upstream.
+including non-remote IDs imported from the combined catalog, go to the native upstream.
 Unknown IDs are rejected without contacting either provider. Matching is exact.
+
+The native catalog is a generation input, not a startup dependency. Deploy the
+binary, router configuration, and generated combined catalog. Keep the native
+catalog only where you regenerate catalogs; refresh it from Codex when needed.
+When catalog ID import is enabled, generate `catalog.output_file` before starting
+the service. Missing or malformed combined catalogs stop startup.
 
 Native requests use the incoming `ChatGPT-Account-ID` header to choose ChatGPT
 or the OpenAI API endpoint. Remote routes receive allowlisted headers and their
