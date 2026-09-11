@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // Runner executes lifecycle commands. Tests replace it to check the exact
@@ -206,7 +207,7 @@ func (m *Manager) Install(ctx context.Context, dryRun, allowOverwrite bool) (Rep
 		return report, err
 	}
 
-	if _, err := m.runner().Run(ctx, "launchctl", "bootstrap", resolved.Domain(), resolved.PlistPath); err != nil {
+	if err := m.bootstrap(ctx, resolved); err != nil {
 		return report, fmt.Errorf("bootstrap failed and %s was left in place: %w", resolved.PlistPath, err)
 	}
 	if _, err := m.runner().Run(ctx, "launchctl", "kickstart", "-k", resolved.ServiceTarget()); err != nil {
@@ -517,4 +518,28 @@ func (m *Manager) platform() string {
 		return m.Options.Platform
 	}
 	return runtime.GOOS
+}
+
+// launchd can acknowledge bootout before releasing the service registration.
+// Retry only its observed bootstrap EIO response, with a short bounded backoff.
+func (m *Manager) bootstrap(ctx context.Context, r Resolved) error {
+	for attempt := 0; ; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		_, err := m.runner().Run(ctx, "launchctl", "bootstrap", r.Domain(), r.PlistPath)
+		if err == nil {
+			return nil
+		}
+		if attempt == 4 || !strings.Contains(strings.ToLower(err.Error()), "bootstrap failed: 5: input/output error") {
+			return err
+		}
+		timer := time.NewTimer(100 * time.Millisecond << attempt)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
+		case <-timer.C:
+		}
+	}
 }
