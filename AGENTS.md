@@ -12,6 +12,18 @@ are introduced. Read `README.md` before changing behavior.
 - Keep service templates and installation logic in this repository.
 - Keep personal paths, endpoints, credentials, and local configuration out of Git.
 
+## Installation layout
+
+Prefer a self-contained per-user installation in `~/.local/lib/codex-model-router/`:
+`codex-model-router`, `config.json`, and generated `config.catalog.json`.
+Edit the installed configuration directly and preserve it during binary upgrades.
+Runtime paths in the service definition and Codex configuration must reference
+this installation, never a source checkout. Pass `--config` explicitly when
+using this layout; the CLI's fallback config location may differ.
+Keep native catalog generation inputs temporary; they are not runtime dependencies.
+Keep service definitions and logs in the platform's service/log locations, outside
+the installation directory. Do not put personal deployment files in Git.
+
 ## Toolchain and validation
 
 Use the exact development toolchain declared in `go.mod` by setting
