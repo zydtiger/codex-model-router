@@ -105,6 +105,9 @@ func Build(cfg *config.Config) ([]byte, error) {
 			if nativeSlugs[key] {
 				return nil, fmt.Errorf("native catalog models[%d]: duplicate slug %q", index, slug)
 			}
+			if _, remote := cfg.RouteFor(slug); remote {
+				return nil, fmt.Errorf("route replaces a native model %q", slug)
+			}
 			nativeSlugs[key] = true
 			if len(template) == 0 && usableTemplate(fields) {
 				template = fields

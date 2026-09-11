@@ -176,7 +176,7 @@ type Catalog struct {
 	OutputFile string `json:"output_file"`
 	// Models are the self-hosted entries added to the picker.
 	Models []CatalogModel `json:"models"`
-	// NativeModelIDsFromCatalog keeps catalog slugs in the native allow list.
+	// NativeModelIDsFromCatalog imports non-remote combined catalog slugs at startup.
 	// Default true.
 	NativeModelIDsFromCatalog *bool `json:"native_model_ids_from_catalog"`
 	// BaseInstructionsFile supplies base_instructions for local entries. When
@@ -336,7 +336,7 @@ func (c *Config) Validate() error {
 		add("%v", err)
 	}
 
-	if len(c.routeByModel) == 0 && len(c.nativeModels) == 0 {
+	if len(c.routeByModel) == 0 && len(c.nativeModels) == 0 && !(c.Catalog.OutputFile != "" && c.CatalogUsesNativeModelIDs()) {
 		add("no models are configured: declare at least one route or native.model")
 	}
 	if len(problems) > 0 {
@@ -556,15 +556,22 @@ func (c *Config) normalizeCatalog(seenRoutes map[string]bool) error {
 			c.routeByModel[model.ID] = route
 		}
 	}
-	if catalog.NativeCatalogFile != "" && c.CatalogUsesNativeModelIDs() {
-		ids, err := catalogSlugs(catalog.NativeCatalogFile)
-		if err != nil {
-			return fmt.Errorf("catalog.native_catalog_file: %w", err)
-		}
-		for _, id := range ids {
-			if _, clash := c.routeByModel[id]; clash {
-				return fmt.Errorf("catalog.native_catalog_file: native model %q is also routed remotely", id)
-			}
+
+	return nil
+}
+
+// LoadRuntimeCatalog imports native IDs from the generated combined catalog.
+// Generation inputs are deliberately not read during service startup.
+func (c *Config) LoadRuntimeCatalog() error {
+	if c.Catalog.OutputFile == "" || !c.CatalogUsesNativeModelIDs() {
+		return nil
+	}
+	ids, err := catalogSlugs(c.Catalog.OutputFile)
+	if err != nil {
+		return fmt.Errorf("catalog.output_file: %w; generate the combined catalog before starting the router", err)
+	}
+	for _, id := range ids {
+		if _, remote := c.routeByModel[id]; !remote {
 			c.nativeModels[id] = true
 		}
 	}

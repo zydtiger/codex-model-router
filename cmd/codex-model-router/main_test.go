@@ -18,6 +18,7 @@ import (
 
 	"io"
 
+	"github.com/zydtiger/codex-model-router/internal/catalog"
 	"github.com/zydtiger/codex-model-router/internal/config"
 	"github.com/zydtiger/codex-model-router/internal/routing"
 	"github.com/zydtiger/codex-model-router/internal/serve"
@@ -362,6 +363,17 @@ func TestHealthcheckAgainstALiveRouter(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if _, _, err := catalog.Generate(cfg, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(cfg.Catalog.NativeCatalogFile); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err = config.Load(work.configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	router, err := routing.New(cfg, routing.Options{Logger: newLogger(cfg, "error", os.Stderr), Env: os.LookupEnv})
 	if err != nil {
 		t.Fatal(err)

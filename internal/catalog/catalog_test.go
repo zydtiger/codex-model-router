@@ -317,15 +317,15 @@ func TestMinimalNativeCatalogDoesNotForceExtraFields(t *testing.T) {
 
 func TestReplacingANativeModelIsRefused(t *testing.T) {
 	// Listing the same ID under a route and the native catalog is refused while
-	// validating the configuration.
-	_, configError := config.Parse([]byte(`{
+	// generating the catalog.
+	_, configError := catalog.Build(mustParse(t, `{
 	  "listen": {"host": "127.0.0.1", "port": 0},
 	  "native": {"chatgpt_base_url": "https://native.invalid/b", "api_base_url": "https://api.invalid/v1", "models": []},
-	  "catalog": {` + nativeField(t, "native-catalog.json") + `},
+	  "catalog": {`+nativeField(t, "native-catalog.json")+`},
 	  "routes": [{"name": "local", "base_url": "http://127.0.0.1:30000/v1", "models": ["gpt-native-top"]}]
 	}`))
-	if configError == nil || !strings.Contains(configError.Error(), "also routed") {
-		t.Fatalf("expected a configuration-level refusal, got %v", configError)
+	if configError == nil || !strings.Contains(configError.Error(), "replaces a native model") {
+		t.Fatalf("expected a generation refusal, got %v", configError)
 	}
 
 	// With the native slug import switched off, generation still refuses to publish

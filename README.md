@@ -80,8 +80,14 @@ Service configuration belongs to this repository. No Docker container is require
 ## Routing and limits
 
 Configured remote model IDs go to their assigned upstream. Explicit native IDs,
-including IDs imported from the native catalog, go to the native upstream.
+including non-remote IDs imported from the combined catalog, go to the native upstream.
 Unknown IDs are rejected without contacting either provider. Matching is exact.
+
+The native catalog is a generation input, not a startup dependency. Deploy the
+binary, router configuration, and generated combined catalog. Keep the native
+catalog only where you regenerate catalogs; refresh it from Codex when needed.
+When catalog ID import is enabled, generate `catalog.output_file` before starting
+the service. Missing or malformed combined catalogs stop startup.
 
 Native requests use the incoming `ChatGPT-Account-ID` header to choose ChatGPT
 or the OpenAI API endpoint. Remote routes receive allowlisted headers and their
