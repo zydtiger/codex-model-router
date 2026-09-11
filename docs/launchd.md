@@ -115,16 +115,14 @@ exit but **not** on a clean exit. `--shutdown-timeout` controls the grace window
 the router gives in-flight SSE streams when it is told to stop.
 
 The router's config, the generated catalog, and your `~/.codex/config.toml` are
-left alone by uninstall. If you also want Codex to stop using the router, run
-`codex-model-router codex-config restore` and restart Codex.
+left alone by uninstall. Before stopping the router, undo its Codex configuration
+changes yourself or through your agent and restart Codex; see
+[rollback](codex-desktop.md#rollback).
 
 ## Other platforms
 
 macOS is the only platform with an installer here. On Linux, run `serve` under
-your own supervisor and edit `~/.codex/config.toml` yourself;
-`codex-model-router codex-config plan` and `codex-config snippet` tell you exactly
-what to change, and `service preview` on macOS is the reference for the
-`serve --config <path>` command line to reproduce:
+your own supervisor and follow [Codex setup](codex-desktop.md) for manual configuration:
 
 ```ini
 [Service]

@@ -195,7 +195,7 @@ func (m *Manager) Install(ctx context.Context, dryRun, allowOverwrite bool) (Rep
 	}
 	report.Notes = append(report.Notes,
 		"the agent starts at login and relaunches after a crash",
-		"run the codex-config apply step and restart Codex to load the combined catalog",
+		"edit the Codex configuration yourself or through your agent, then restart Codex; see docs/codex-desktop.md",
 	)
 	return report, nil
 }
@@ -244,7 +244,7 @@ func (m *Manager) Uninstall(ctx context.Context, dryRun, allowOverwrite bool) (R
 		return report, fmt.Errorf("the agent was stopped but %s could not be removed: %w", resolved.PlistPath, err)
 	}
 	report.Notes = append(report.Notes,
-		"configuration, catalog, and Codex config files were left untouched; use codex-config restore to undo those edits",
+		"configuration and catalog files were left untouched; undo Codex configuration edits yourself or through your agent",
 	)
 	return report, nil
 }

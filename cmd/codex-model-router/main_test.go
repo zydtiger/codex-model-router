@@ -18,8 +18,6 @@ import (
 
 	"io"
 
-	"github.com/BurntSushi/toml"
-
 	"github.com/zydtiger/codex-model-router/internal/config"
 	"github.com/zydtiger/codex-model-router/internal/routing"
 	"github.com/zydtiger/codex-model-router/internal/serve"
@@ -31,7 +29,6 @@ import (
 type workspace struct {
 	dir        string
 	configPath string
-	codexPath  string
 	catalog    string
 	upstream   string
 	calls      *callLog
@@ -85,13 +82,6 @@ func newWorkspace(t *testing.T) *workspace {
 	if err := os.WriteFile(instructions, []byte("You are a coding agent on a lab server.\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	codexPath := filepath.Join(dir, "config.toml")
-	if err := os.WriteFile(codexPath, []byte(`model = "gpt-native"
-model_reasoning_effort = "high"
-# a comment that must survive
-`), 0o600); err != nil {
-		t.Fatal(err)
-	}
 	configPath := filepath.Join(dir, "router.json")
 	body := `{
   "listen": {"host": "127.0.0.1", "port": 4317},
@@ -136,7 +126,6 @@ model_reasoning_effort = "high"
 	return &workspace{
 		dir:        dir,
 		configPath: configPath,
-		codexPath:  codexPath,
 		catalog:    filepath.Join(dir, "model-catalog.json"),
 		upstream:   upstream.URL,
 		calls:      calls,
@@ -178,7 +167,6 @@ func TestVersionAndUsage(t *testing.T) {
 func TestUsageListsEverySubcommand(t *testing.T) {
 	out := mustRun(t, exitOK, "help")
 	for _, name := range []string{"serve", "validate", "catalog generate", "catalog print-example",
-		"codex-config plan", "codex-config apply", "codex-config restore", "codex-config snippet",
 		"service preview", "service install", "service status", "service uninstall", "healthcheck", "version"} {
 		if !strings.Contains(out, name) {
 			t.Fatalf("usage does not mention %q:\n%s", name, out)
@@ -308,159 +296,6 @@ func TestCatalogGenerate(t *testing.T) {
 	}
 }
 
-func TestCodexConfigPlanApplyRestore(t *testing.T) {
-	work := newWorkspace(t)
-	mustRun(t, exitOK, "catalog", "generate", "--config", work.configPath)
-
-	planOut := mustRun(t, exitOK, "codex-config", "plan", "--config", work.configPath, "--codex-config", work.codexPath)
-	if !strings.Contains(planOut, "openai_base_url") || !strings.Contains(planOut, "model_catalog_json") {
-		t.Fatalf("the plan does not name both keys:\n%s", planOut)
-	}
-	if !strings.Contains(planOut, "http://127.0.0.1:4317/v1") {
-		t.Fatalf("the plan does not show the advertised URL:\n%s", planOut)
-	}
-	before, err := os.ReadFile(work.codexPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(string(before), "openai_base_url") {
-		t.Fatal("plan modified the Codex configuration")
-	}
-
-	// An apply without --confirm is refused and writes nothing.
-	code, _, stderr := runCLI(t, "codex-config", "apply", "--config", work.configPath, "--codex-config", work.codexPath)
-	if code != exitUsage {
-		t.Fatalf("an unconfirmed apply exited %d, want %d: %s", code, exitUsage, stderr)
-	}
-	unconfirmed, err := os.ReadFile(work.codexPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(unconfirmed) != string(before) {
-		t.Fatal("an unconfirmed apply wrote the file")
-	}
-
-	mustRun(t, exitOK, "codex-config", "apply", "--confirm", "--config", work.configPath, "--codex-config", work.codexPath)
-	after, err := os.ReadFile(work.codexPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(after), "openai_base_url") || !strings.Contains(string(after), "model_catalog_json") {
-		t.Fatalf("apply did not write both pointers:\n%s", after)
-	}
-	if !strings.Contains(string(after), "# a comment that must survive") || !strings.Contains(string(after), `model = "gpt-native"`) {
-		t.Fatalf("apply destroyed existing content:\n%s", after)
-	}
-	var parsed map[string]any
-	if _, err := toml.Decode(string(after), &parsed); err != nil {
-		t.Fatalf("the applied file does not parse as TOML: %v", err)
-	}
-	if parsed["openai_base_url"] != "http://127.0.0.1:4317/v1" {
-		t.Fatalf("openai_base_url = %v", parsed["openai_base_url"])
-	}
-	if parsed["model_catalog_json"] != work.catalog {
-		t.Fatalf("model_catalog_json = %v", parsed["model_catalog_json"])
-	}
-	backup := work.codexPath + ".codex-model-router.bak"
-	if _, err := os.Stat(backup); err != nil {
-		t.Fatalf("apply kept no backup: %v", err)
-	}
-
-	// A repeat apply is a no-op, so relaunching the setup is safe.
-	mustRun(t, exitOK, "codex-config", "apply", "--confirm", "--config", work.configPath, "--codex-config", work.codexPath)
-	repeat, err := os.ReadFile(work.codexPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(repeat) != string(after) {
-		t.Fatal("a repeat apply rewrote the file")
-	}
-
-	mustRun(t, exitOK, "codex-config", "restore", "--codex-config", work.codexPath)
-	restored, err := os.ReadFile(work.codexPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(restored) != string(before) {
-		t.Fatalf("restore did not put the original back:\n%s", restored)
-	}
-	// apply keeps its backup, so restore can be run again and still matches.
-	mustRun(t, exitOK, "codex-config", "restore", "--codex-config", work.codexPath)
-	again, err := os.ReadFile(work.codexPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(again) != string(before) {
-		t.Fatal("a repeat restore changed the file")
-	}
-	// With no backup next to the file there is nothing to restore, and that is an
-	// error rather than a silent success.
-	untouched := filepath.Join(work.dir, "other-config.toml")
-	if err := os.WriteFile(untouched, []byte(`model = "gpt-native"`+"\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if code, _, _ := runCLI(t, "codex-config", "restore", "--codex-config", untouched); code != exitError {
-		t.Fatalf("restoring with no backup exited %d, want %d", code, exitError)
-	}
-	untouchedAfter, err := os.ReadFile(untouched)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(untouchedAfter) != `model = "gpt-native"`+"\n" {
-		t.Fatal("a failed restore changed the file")
-	}
-
-	// A missing catalog is reported before any write.
-	if code, _, _ := runCLI(t, "codex-config", "apply", "--confirm", "--config", work.configPath,
-		"--codex-config", work.codexPath, "--catalog", filepath.Join(work.dir, "absent.json")); code != exitError {
-		t.Fatalf("a missing catalog exited %d, want %d", code, exitError)
-	}
-	unwritten, err := os.ReadFile(work.codexPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(unwritten) != string(before) {
-		t.Fatal("a failed apply changed the Codex configuration")
-	}
-
-	// --base-url overrides the derived value, which is how a non-default port works.
-	out := mustRun(t, exitOK, "codex-config", "plan", "--config", work.configPath,
-		"--codex-config", work.codexPath, "--base-url", "http://127.0.0.1:5000/v1")
-	if !strings.Contains(out, "http://127.0.0.1:5000/v1") {
-		t.Fatalf("--base-url was ignored:\n%s", out)
-	}
-}
-
-func TestCodexConfigRequiresACatalogPath(t *testing.T) {
-	work := newWorkspace(t)
-	bare := filepath.Join(work.dir, "bare.json")
-	if err := os.WriteFile(bare, []byte(`{
-	  "listen": {"host": "127.0.0.1", "port": 4317},
-	  "native": {"chatgpt_base_url": "`+work.upstream+`/backend-api/codex", "api_base_url": "`+work.upstream+`/v1", "models": ["gpt-5"]}
-	}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if code, _, _ := runCLI(t, "codex-config", "plan", "--config", bare, "--codex-config", work.codexPath); code != exitUsage {
-		t.Fatalf("a configuration with no catalog path exited %d, want %d", code, exitUsage)
-	}
-}
-
-func TestCodexConfigSnippet(t *testing.T) {
-	work := newWorkspace(t)
-	mustRun(t, exitOK, "catalog", "generate", "--config", work.configPath)
-	out := mustRun(t, exitOK, "codex-config", "snippet", "--catalog", work.catalog, "--base-url", "http://127.0.0.1:4317/v1")
-	if !strings.Contains(out, "openai_base_url") || !strings.Contains(out, "model_catalog_json") {
-		t.Fatalf("snippet:\n%s", out)
-	}
-	var parsed map[string]any
-	if _, err := toml.Decode(out, &parsed); err != nil {
-		t.Fatalf("the snippet is not valid TOML: %v\n%s", err, out)
-	}
-	if parsed["openai_base_url"] != "http://127.0.0.1:4317/v1" {
-		t.Fatalf("snippet base URL = %v", parsed["openai_base_url"])
-	}
-}
-
 func TestServicePreviewAndDryRunTouchNothing(t *testing.T) {
 	work := newWorkspace(t)
 	t.Setenv("HOME", t.TempDir())
@@ -580,7 +415,7 @@ func TestHealthcheckAgainstALiveRouter(t *testing.T) {
 	}
 }
 
-func TestRandomPortNeedsAnExplicitPortAndBaseURL(t *testing.T) {
+func TestRandomPortHealthcheckNeedsAnExplicitPort(t *testing.T) {
 	work := newWorkspace(t)
 	random := filepath.Join(work.dir, "random-port.json")
 	data, err := os.ReadFile(work.configPath)
@@ -593,15 +428,8 @@ func TestRandomPortNeedsAnExplicitPortAndBaseURL(t *testing.T) {
 	if code, _, _ := runCLI(t, "healthcheck", "--config", random); code != exitUsage {
 		t.Fatalf("a random-port healthcheck exited %d, want %d", code, exitUsage)
 	}
-	if code, _, _ := runCLI(t, "codex-config", "plan", "--config", random, "--codex-config", work.codexPath); code != exitUsage {
-		t.Fatalf("a random-port codex-config plan exited %d, want %d", code, exitUsage)
-	}
-	// validate still works: it does not need a stable URL.
+	// validate does not need a stable URL.
 	mustRun(t, exitOK, "validate", "--config", random)
-	// An explicit --base-url makes codex-config work again.
-	mustRun(t, exitOK, "catalog", "generate", "--config", work.configPath)
-	mustRun(t, exitOK, "codex-config", "plan", "--config", random, "--codex-config", work.codexPath,
-		"--base-url", "http://127.0.0.1:4399/v1")
 }
 
 func TestServeReportsAnInvalidConfiguration(t *testing.T) {
