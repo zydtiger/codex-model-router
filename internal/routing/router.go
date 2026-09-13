@@ -134,6 +134,7 @@ type requestState struct {
 	warnings      []string
 	namespaces    *namespaceMapping
 	disclosure    *toolDisclosure
+	compaction    *compactionRequest
 	responseLimit int64
 }
 
@@ -330,6 +331,15 @@ func (h *Router) selectTarget(r *http.Request, model string, body *decodedBody, 
 		if !exists {
 			return nil, clientError(http.StatusServiceUnavailable, "route_unavailable", "route %q is not available", route.Name)
 		}
+		if _, err := expandCheckpoints(fields, route.Compaction.Adapter == "text_summary"); err != nil {
+			return nil, err
+		}
+		compaction, err := prepareCompaction(fields, route, state.rest)
+		if err != nil {
+			return nil, err
+		}
+		state.compaction = compaction
+		state.responseLimit = h.cfg.MaxRequestBytes
 		translated, stats, err := translateRemoteBody(fields, route)
 		if err != nil {
 			return nil, err
@@ -344,7 +354,9 @@ func (h *Router) selectTarget(r *http.Request, model string, body *decodedBody, 
 				return nil, err
 			}
 			state.namespaces = mapping
-			state.disclosure = prepareToolDisclosure(translated, mapping)
+			if compaction == nil {
+				state.disclosure = prepareToolDisclosure(translated, mapping)
+			}
 			if state.disclosure != nil {
 				state.disclosure.reasoningPolicy = route.Input.ReasoningItems
 				for _, key := range []string{"previous_response_id", "conversation"} {
@@ -354,6 +366,9 @@ func (h *Router) selectTarget(r *http.Request, model string, body *decodedBody, 
 				}
 			}
 			state.responseLimit = h.cfg.MaxRequestBytes
+		}
+		if compaction != nil {
+			compaction.finishRequest(translated)
 		}
 		encoded, err := encodeJSON(translated)
 		if err != nil {
@@ -366,7 +381,7 @@ func (h *Router) selectTarget(r *http.Request, model string, body *decodedBody, 
 		if err != nil {
 			return nil, err
 		}
-		if state.namespaces != nil {
+		if state.namespaces != nil || compaction != nil {
 			headers.Set("Accept-Encoding", "identity")
 		}
 		state.body = encoded
@@ -400,6 +415,21 @@ func (h *Router) selectTarget(r *http.Request, model string, body *decodedBody, 
 	state.headers = headers
 	// Native upstreams receive the body byte-for-byte as Codex sent it.
 	state.body = body.Raw
+	changed, checkpointErr := expandCheckpoints(fields, false)
+	if checkpointErr != nil {
+		return nil, checkpointErr
+	}
+	if changed {
+		encoded, encodeErr := encodeJSON(fields)
+		if encodeErr != nil {
+			return nil, encodeErr
+		}
+		if int64(len(encoded)) > h.cfg.MaxRequestBytes {
+			return nil, clientError(http.StatusRequestEntityTooLarge, "request_too_large", "expanded checkpoint exceeds request size limit")
+		}
+		state.body = encoded
+		headers.Del("Content-Encoding")
+	}
 	state.route = routeName
 	h.countRequests.Add(1)
 	h.countNative.Add(1)
@@ -476,6 +506,9 @@ func (t *target) targetURL(rest, rawQuery string) *url.URL {
 func (t *target) modifyResponse(resp *http.Response) error {
 	if state, ok := resp.Request.Context().Value(stateKey{}).(*requestState); ok && state != nil {
 		state.status = resp.StatusCode
+		if state.compaction != nil {
+			return adaptCompactionResponse(resp, state.compaction, state.responseLimit)
+		}
 		if state.disclosure != nil {
 			if err := adaptDisclosureResponse(resp, state.disclosure, t.transport, state.responseLimit); err != nil {
 				return err
