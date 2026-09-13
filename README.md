@@ -16,6 +16,8 @@ inventory on every request. Function-call responses and
 replayed history retain Codex's namespace identities across JSON and SSE.
 See [namespace tools](docs/configuration.md#namespace-tools-on-sglang-routes).
 
+Routes can also opt into [text checkpoints for remote compaction v2](docs/configuration.md#text-checkpoints-for-remote-compaction-v2), using the selected upstream model to summarize context while Codex owns history replacement and persistence.
+
 Validation includes mock upstream tests, race tests, and a real SGLang function
 call/result loop. With Codex CLI 0.153.4, an isolated configuration successfully
 loaded the combined catalog and used a self-hosted model to run a read-only shell

@@ -109,17 +109,24 @@ type Native struct {
 
 // Route is one self-hosted OpenAI-compatible upstream.
 type Route struct {
-	Name      string            `json:"name"`
-	BaseURL   string            `json:"base_url"`
-	Models    []string          `json:"models"`
-	Auth      *Auth             `json:"auth,omitempty"`
-	Headers   map[string]string `json:"extra_headers"`
-	Reasoning Reasoning         `json:"reasoning"`
-	Input     Input             `json:"input"`
+	Name       string            `json:"name"`
+	BaseURL    string            `json:"base_url"`
+	Models     []string          `json:"models"`
+	Auth       *Auth             `json:"auth,omitempty"`
+	Headers    map[string]string `json:"extra_headers"`
+	Reasoning  Reasoning         `json:"reasoning"`
+	Input      Input             `json:"input"`
+	Compaction Compaction        `json:"compaction"`
 	// ResponseHeaderTimeoutSeconds bounds the wait for upstream response
 	// headers. Zero uses the default; -1 disables the bound. Generation time is
 	// never bounded, because headers arrive before the model finishes.
 	ResponseHeaderTimeoutSeconds int `json:"response_header_timeout_seconds"`
+}
+
+// Compaction enables router-owned text checkpoints for remote compaction v2.
+type Compaction struct {
+	Adapter         string `json:"adapter"`
+	MaxOutputTokens int    `json:"max_output_tokens"`
 }
 
 // Auth is the route's own credential, taken from a configured environment
@@ -653,6 +660,21 @@ func (r *Route) validate() error {
 		}
 	}
 
+	switch r.Compaction.Adapter {
+	case "":
+		if r.Compaction.MaxOutputTokens != 0 {
+			return errors.New("compaction.max_output_tokens requires compaction.adapter")
+		}
+	case "text_summary":
+		if r.Compaction.MaxOutputTokens == 0 {
+			r.Compaction.MaxOutputTokens = 4096
+		}
+		if r.Compaction.MaxOutputTokens < 256 || r.Compaction.MaxOutputTokens > 32768 {
+			return errors.New("compaction.max_output_tokens must be between 256 and 32768")
+		}
+	default:
+		return fmt.Errorf("compaction.adapter %q is unknown", r.Compaction.Adapter)
+	}
 	switch strings.TrimSpace(r.Reasoning.Adapter) {
 	case "":
 		r.Reasoning.Adapter = AdapterNone

@@ -461,3 +461,70 @@ Service startup reads `catalog.output_file` when catalog ID import is enabled,
 excluding IDs assigned to remote routes. Generate that file before starting the
 service; native input files need not be installed. Route/native collisions in
 the generation input are rejected during catalog generation.
+
+## Text checkpoints for remote compaction v2
+
+A route can implement Codex remote compaction v2 using the same upstream model
+for a text summary:
+
+```json
+"compaction": {
+  "adapter": "text_summary",
+  "max_output_tokens": 4096
+}
+```
+
+The adapter is disabled when omitted. `max_output_tokens` defaults to 4096 and
+accepts 256 through 32768; a smaller explicit request output limit still wins.
+Setting a limit without the adapter is rejected. This is an output budget,
+including upstream reasoning tokens, not a target summary length. The upstream
+must complete with nonempty assistant text; refusals, tool calls, truncated
+outputs, and incomplete streams fail without installing a checkpoint. Requests
+that exceed the upstream context window also fail; the router does not silently
+trim history to make a summary fit. Set the model's auto-compaction threshold
+with enough headroom for the summarization prompt and output budget.
+
+The adapter recognizes a single terminal `compaction_trigger` on the ordinary
+`/responses` endpoint before input normalization. It asks the selected model for
+a checkpoint with tools disabled, then returns one `compaction` output item.
+The complete upstream summary is validated before any successful compaction
+response is emitted. Codex owns replacing and persisting history, retaining user
+messages, reinjecting its initial context, and recalculating active context usage.
+The summary inference's usage is preserved; it is not fabricated as the smaller
+post-compaction context usage.
+
+The item's `encrypted_content` field contains a versioned, base64url-encoded JSON
+text checkpoint (`cmr.compaction.v1:`). Despite the protocol field name, this is
+**not encryption** and is not OpenAI-native compaction state. The payload is
+self-contained: restart, resume, and fork do not require router memory or a
+separate checkpoint database. On replay, the router expands its checkpoints into
+ordinary user-context messages at the same history position, before generic
+input policies can drop them. They never become system instructions. Payloads
+are bounded to 256 KiB of decoded JSON; malformed or unsupported router payloads
+fail explicitly. Repeated compaction summarizes the prior checkpoint text.
+
+Expansion applies to recognized router checkpoints on all routes, including
+native GPT routes, so switching from a summarized third-party conversation does
+not forward a foreign opaque carrier to OpenAI. Native requests without router
+checkpoints retain their existing behavior. Routes with `text_summary` enabled
+reject foreign compaction items even when `input.compaction_items` is `drop`:
+they cannot recover OpenAI's encrypted history and must not silently lose it.
+Resume from an uncompacted history when moving such a conversation to that route.
+
+This adapter requires full replayed input. `previous_response_id`, `conversation`,
+and `context_management` are rejected on its compaction requests. Legacy
+`/responses/compact` and server-side automatic `context_management` are not
+implemented by this adapter. A v2 trigger on a route without the adapter returns
+an explicit configuration error. Namespace schema disclosure continues normally
+on subsequent task requests and is bypassed during summary generation.
+
+For a Mac integration check using an actual Codex app-server and mock inference:
+
+```sh
+python3 scripts/compaction_smoke.py --codex /path/to/codex --router bin/codex-model-router
+```
+
+Use the executable bundled with the desktop version being validated. This check
+uses an isolated temporary configuration and verifies manual compaction,
+automatic compaction, restart/resume, fork, and replacement of old tool history.
+It does not use a live model or modify the running installation.
