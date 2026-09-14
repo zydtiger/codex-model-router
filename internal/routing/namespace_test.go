@@ -128,88 +128,111 @@ func TestNamespaceRejectsUnsupportedDefinitions(t *testing.T) {
 }
 
 func TestNamespaceResponseAndNextRequest(t *testing.T) {
-	for _, stream := range []bool{false, true} {
-		t.Run(fmt.Sprint("stream=", stream), func(t *testing.T) {
-			call := `{"type":"function_call","id":"fc_1","call_id":"call_1","name":"mcp__node_repl__js","arguments":"{\"code\":\"1+1\"}"}`
-			up := newUpstream(t, func(w http.ResponseWriter, r *http.Request) {
-				if !stream {
-					w.Header().Set("Content-Type", "application/json")
-					w.Header().Set("ETag", "old")
-					fmt.Fprintf(w, `{"object":"response","output":[%s],"tools":[]}`, call)
-					return
+	// The same request/replay flow must hold under every adapter combination:
+	// namespace flattening with and without a reasoning adapter, and under both
+	// schema loading modes.
+	routes := []struct {
+		name   string
+		config func(t *testing.T, baseURL string) string
+	}{
+		{"reasoning and on_demand", namespaceRouteConfig},
+		{"namespace only, schema_loading all", func(t *testing.T, baseURL string) string {
+			return toolsOnlyRouteConfig(t, baseURL, "all")
+		}},
+		{"namespace only, on_demand", func(t *testing.T, baseURL string) string {
+			return toolsOnlyRouteConfig(t, baseURL, "on_demand")
+		}},
+	}
+	for _, route := range routes {
+		for _, stream := range []bool{false, true} {
+			t.Run(route.name+", stream="+fmt.Sprint(stream), func(t *testing.T) {
+				call := `{"type":"function_call","id":"fc_1","call_id":"call_1","name":"mcp__node_repl__js","arguments":"{\"code\":\"1+1\"}"}`
+				up := newUpstream(t, func(w http.ResponseWriter, r *http.Request) {
+					if !stream {
+						w.Header().Set("Content-Type", "application/json")
+						w.Header().Set("ETag", "old")
+						fmt.Fprintf(w, `{"object":"response","output":[%s],"tools":[]}`, call)
+						return
+					}
+					w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
+					fmt.Fprint(w, ": keepalive\r\n\r\n")
+					fmt.Fprintf(w, "event: response.output_item.added\nid: 1\ndata: {\"type\":\"response.output_item.added\",\ndata: \"item\":%s}\n\n", call)
+					fmt.Fprint(w, "data: {\"type\":\"response.function_call_arguments.delta\",\"delta\":\"mcp__node_repl__js\",\"name\":\"mcp__node_repl__js\"}\n\n")
+					fmt.Fprintf(w, "data: {\"type\":\"response.output_item.done\",\"item\":%s}\n\n", call)
+					fmt.Fprintf(w, "data: {\"type\":\"response.completed\",\"response\":{\"output\":[%s],\"tools\":[]}}\n\n", call)
+					fmt.Fprint(w, "data: [DONE]\n\n")
+				})
+				router, _ := newRouter(t, route.config(t, up.server.URL), nil)
+				fields := namespaceRequest(t)
+				fields["tool_choice"] = json.RawMessage(`{"type":"function","namespace":"mcp__node_repl","name":"js"}`)
+				request, _ := json.Marshal(fields)
+				result := doRequest(router, http.MethodPost, "/v1/responses", request, nil)
+				if result.Code != 200 {
+					t.Fatalf("response: %d %s", result.Code, result.Body.String())
 				}
-				w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
-				fmt.Fprint(w, ": keepalive\r\n\r\n")
-				fmt.Fprintf(w, "event: response.output_item.added\nid: 1\ndata: {\"type\":\"response.output_item.added\",\ndata: \"item\":%s}\n\n", call)
-				fmt.Fprint(w, "data: {\"type\":\"response.function_call_arguments.delta\",\"delta\":\"mcp__node_repl__js\",\"name\":\"mcp__node_repl__js\"}\n\n")
-				fmt.Fprintf(w, "data: {\"type\":\"response.output_item.done\",\"item\":%s}\n\n", call)
-				fmt.Fprintf(w, "data: {\"type\":\"response.completed\",\"response\":{\"output\":[%s],\"tools\":[]}}\n\n", call)
-				fmt.Fprint(w, "data: [DONE]\n\n")
+				if result.Header().Get("ETag") != "" {
+					t.Fatal("stale ETag survived")
+				}
+				var final toolFields
+				if stream {
+					scanner := bufio.NewScanner(strings.NewReader(result.Body.String()))
+					for scanner.Scan() {
+						line := scanner.Text()
+						if !strings.HasPrefix(line, "data: {") {
+							continue
+						}
+						var event toolFields
+						if err := json.Unmarshal([]byte(line[6:]), &event); err != nil {
+							t.Fatal(err)
+						}
+						if event["item"] != nil {
+							assertRestoredCall(t, event["item"])
+						}
+						if event.string("type") == "response.function_call_arguments.delta" && event.string("delta") != "mcp__node_repl__js" {
+							t.Fatal("argument delta mutated")
+						}
+						if event["response"] != nil {
+							_ = json.Unmarshal(event["response"], &final)
+						}
+					}
+					if !strings.Contains(result.Body.String(), "id: 1\n") || !strings.Contains(result.Body.String(), "data: [DONE]\n\n") {
+						t.Fatal("SSE metadata lost")
+					}
+				} else {
+					_ = json.Unmarshal(result.Body.Bytes(), &final)
+				}
+				var output []json.RawMessage
+				_ = json.Unmarshal(final["output"], &output)
+				if len(output) != 1 {
+					t.Fatalf("missing output: %s", result.Body.String())
+				}
+				assertRestoredCall(t, output[0])
+				if !bytes.Equal(compactJSON(t, final["tools"]), compactJSON(t, []byte(namespaceTools))) {
+					t.Fatal("response tool definitions were not restored")
+				}
+				// Replay exactly the restored call and its result through a second HTTP
+				// request, as Codex does after executing the tool.
+				fields["input"] = json.RawMessage("[" + string(output[0]) + `,{"type":"function_call_output","call_id":"call_1","output":"2"}]`)
+				request, _ = json.Marshal(fields)
+				result = doRequest(router, http.MethodPost, "/v1/responses", request, nil)
+				if result.Code != 200 {
+					t.Fatal(result.Body.String())
+				}
+				var replay struct {
+					Tools      []toolFields
+					Input      []toolFields
+					ToolChoice toolFields `json:"tool_choice"`
+				}
+				_ = json.Unmarshal(up.requests()[1].Body, &replay)
+				if replay.Tools[1].string("type") != "function" || replay.Input[0].string("name") != "mcp__node_repl__js" || replay.Input[0]["namespace"] != nil || replay.Input[1].string("output") != "2" {
+					t.Fatalf("bad replay: %s", up.requests()[1].Body)
+				}
+				// The explicit selector keeps travelling upstream in flattened form.
+				if replay.ToolChoice.string("name") != "mcp__node_repl__js" || replay.ToolChoice["namespace"] != nil {
+					t.Fatalf("bad replay selector: %s", up.requests()[1].Body)
+				}
 			})
-			router, _ := newRouter(t, sglangRouteConfig(t, up.server.URL), nil)
-			fields := namespaceRequest(t)
-			request, _ := json.Marshal(fields)
-			result := doRequest(router, http.MethodPost, "/v1/responses", request, nil)
-			if result.Code != 200 {
-				t.Fatalf("response: %d %s", result.Code, result.Body.String())
-			}
-			if result.Header().Get("ETag") != "" {
-				t.Fatal("stale ETag survived")
-			}
-			var final toolFields
-			if stream {
-				scanner := bufio.NewScanner(strings.NewReader(result.Body.String()))
-				for scanner.Scan() {
-					line := scanner.Text()
-					if !strings.HasPrefix(line, "data: {") {
-						continue
-					}
-					var event toolFields
-					if err := json.Unmarshal([]byte(line[6:]), &event); err != nil {
-						t.Fatal(err)
-					}
-					if event["item"] != nil {
-						assertRestoredCall(t, event["item"])
-					}
-					if event.string("type") == "response.function_call_arguments.delta" && event.string("delta") != "mcp__node_repl__js" {
-						t.Fatal("argument delta mutated")
-					}
-					if event["response"] != nil {
-						_ = json.Unmarshal(event["response"], &final)
-					}
-				}
-				if !strings.Contains(result.Body.String(), "id: 1\n") || !strings.Contains(result.Body.String(), "data: [DONE]\n\n") {
-					t.Fatal("SSE metadata lost")
-				}
-			} else {
-				_ = json.Unmarshal(result.Body.Bytes(), &final)
-			}
-			var output []json.RawMessage
-			_ = json.Unmarshal(final["output"], &output)
-			if len(output) != 1 {
-				t.Fatalf("missing output: %s", result.Body.String())
-			}
-			assertRestoredCall(t, output[0])
-			if !bytes.Equal(compactJSON(t, final["tools"]), compactJSON(t, []byte(namespaceTools))) {
-				t.Fatal("response tool definitions were not restored")
-			}
-			// Replay exactly the restored call and its result through a second HTTP
-			// request, as Codex does after executing the tool.
-			fields["input"] = json.RawMessage("[" + string(output[0]) + `,{"type":"function_call_output","call_id":"call_1","output":"2"}]`)
-			request, _ = json.Marshal(fields)
-			result = doRequest(router, http.MethodPost, "/v1/responses", request, nil)
-			if result.Code != 200 {
-				t.Fatal(result.Body.String())
-			}
-			var replay struct {
-				Tools []toolFields
-				Input []toolFields
-			}
-			_ = json.Unmarshal(up.requests()[1].Body, &replay)
-			if replay.Tools[1].string("type") != "function" || replay.Input[0].string("name") != "mcp__node_repl__js" || replay.Input[0]["namespace"] != nil || replay.Input[1].string("output") != "2" {
-				t.Fatalf("bad replay: %s", up.requests()[1].Body)
-			}
-		})
+		}
 	}
 }
 
@@ -236,7 +259,7 @@ func TestNamespaceStreamFlushAndCancellation(t *testing.T) {
 		case <-time.After(5 * time.Second):
 		}
 	})
-	router, _ := newRouter(t, sglangRouteConfig(t, up.server.URL), nil)
+	router, _ := newRouter(t, namespaceRouteConfig(t, up.server.URL), nil)
 	server := httptest.NewServer(router)
 	defer server.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)

@@ -14,7 +14,8 @@ import (
 )
 
 func compactConfig(t *testing.T, url string) string {
-	return strings.Replace(sglangRouteConfig(t, url), `"reasoning":`, `"compaction":{"adapter":"text_summary"},"reasoning":`, 1)
+	base := strings.Replace(reasoningRouteConfig(t, url), `"reasoning":`, `"compaction":{"adapter":"text_summary"},"tools":{"namespace_adapter":"namespace_to_functions","schema_loading":"on_demand"},"reasoning":`, 1)
+	return base
 }
 func compactRequest(t *testing.T, stream bool) map[string]json.RawMessage {
 	f := namespaceRequest(t)
@@ -140,7 +141,7 @@ func TestCompactionRejectsInvalidRequests(t *testing.T) {
 			}
 		})
 	}
-	router, _ := newRouter(t, sglangRouteConfig(t, "http://127.0.0.1:1"), nil)
+	router, _ := newRouter(t, reasoningRouteConfig(t, "http://127.0.0.1:1"), nil)
 	b, _ := json.Marshal(compactRequest(t, false))
 	if r := doRequest(router, "POST", "/v1/responses", b, nil); r.Code != 400 {
 		t.Fatal(r.Code)

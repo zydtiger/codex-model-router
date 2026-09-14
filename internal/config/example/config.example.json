@@ -18,16 +18,16 @@
   },
   "routes": [
     {
-      "name": "sglang",
+      "name": "lab-qwen3-32b",
       "base_url": "http://127.0.0.1:30000/v1",
       "models": ["qwen3-32b"],
       "auth": {
-        "api_key_env": "SGLANG_API_KEY",
+        "api_key_env": "LAB_QWEN3_API_KEY",
         "header": "Authorization",
         "scheme": "bearer"
       },
       "reasoning": {
-        "adapter": "sglang_chat_template",
+        "adapter": "reasoning_to_chat_template",
         "supported_efforts": ["none", "low", "medium", "high"],
         "unknown_effort": "drop",
         "forward_reasoning": false,
@@ -44,10 +44,14 @@
         "developer_role_as_system": true,
         "unknown_items": "drop"
       },
+      "tools": {
+        "namespace_adapter": "namespace_to_functions",
+        "schema_loading": "on_demand"
+      },
       "response_header_timeout_seconds": 0
     },
     {
-      "name": "vllm",
+      "name": "lab-deepseek-r1",
       "base_url": "http://127.0.0.1:8000/v1",
       "models": ["deepseek-r1-distill"]
     }
@@ -60,7 +64,7 @@
     "models": [
       {
         "id": "qwen3-32b",
-        "route": "sglang",
+        "route": "lab-qwen3-32b",
         "display_name": "Qwen3 32B (local)",
         "context_window": 131072,
         "input_modalities": ["text"],

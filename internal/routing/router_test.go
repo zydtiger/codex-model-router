@@ -680,13 +680,13 @@ func TestReasoningAdapterMapsConfiguredEfforts(t *testing.T) {
         "name": "local",
         "base_url": %q,
         "models": ["qwen3-32b"],
-        "reasoning": {
-          "adapter": "sglang_chat_template",
-          "supported_efforts": ["none", "low", "medium", "high"],
-          "chat_template_kwargs": {
-            "enable_thinking": {"none": false, "low": true, "medium": true, "high": true},
-            "reasoning_effort": {"low": "low", "medium": "medium", "high": "high"},
-            "preserve_thinking": true
+	        "reasoning": {
+	          "adapter": "reasoning_to_chat_template",
+	          "supported_efforts": ["none", "low", "medium", "high"],
+	          "chat_template_kwargs": {
+	            "enable_thinking": {"none": false, "low": true, "medium": true, "high": true},
+	            "reasoning_effort": {"low": "low", "medium": "medium", "high": "high"},
+	            "preserve_thinking": true
           }
         }
       }]
@@ -746,7 +746,7 @@ func TestReasoningAdapterCanRejectUnknownEffort(t *testing.T) {
       "native": {"chatgpt_base_url": "http://127.0.0.1:1/backend-api/codex", "api_base_url": "http://127.0.0.1:1/v1", "models": ["gpt-5"]},
       "routes": [{
         "name": "local", "base_url": %q, "models": ["qwen3-32b"],
-        "reasoning": {"adapter": "sglang_chat_template", "unknown_effort": "error",
+	        "reasoning": {"adapter": "reasoning_to_chat_template", "unknown_effort": "error",
           "supported_efforts": ["low", "medium"],
           "chat_template_kwargs": {"enable_thinking": {"low": true, "medium": true}}}
       }]
@@ -1287,7 +1287,7 @@ func TestChatTemplateKwargsNullDoesNotPanic(t *testing.T) {
 		`{"model":"routed-model","input":"x","reasoning":{"effort":"high"},"chat_template_kwargs":{"thinking":"yes"}}`,
 	} {
 		local := newUpstream(t, nil)
-		config := sglangRouteConfig(t, local.server.URL)
+		config := reasoningRouteConfig(t, local.server.URL)
 		router, _ := newRouter(t, config, nil)
 		recorder := doRequest(router, http.MethodPost, "/v1/responses", json.RawMessage(payload), nil)
 		if recorder.Code != http.StatusOK {
@@ -1330,15 +1330,174 @@ func TestClientNullFieldsSurviveWhenNothingIsConfigured(t *testing.T) {
 	}
 }
 
-// sglangRouteConfig routes one model through the SGLang adapter with a kwarg that is
-// always injected.
-func sglangRouteConfig(t *testing.T, baseURL string) string {
+// reasoningRouteConfig routes one model through the reasoning adapter with a
+// kwarg that is always injected.
+func reasoningRouteConfig(t *testing.T, baseURL string) string {
 	t.Helper()
 	return fmt.Sprintf(`{
       "listen": {"host": "127.0.0.1", "port": 4317},
       "native": {"chatgpt_base_url": "http://127.0.0.1:1", "api_base_url": "http://127.0.0.1:1", "models": ["gpt-native"]},
       "routes": [{"name":"local","base_url":%q,"models":["routed-model"],
-        "reasoning":{"adapter":"sglang_chat_template","supported_efforts":["high"],
+        "reasoning":{"adapter":"reasoning_to_chat_template","supported_efforts":["high"],
           "chat_template_kwargs":{"thinking":{"none":false,"high":true}}}}]
     }`, baseURL)
+}
+
+// namespaceRouteConfig combines the reasoning adapter with explicit namespace
+// flattening and on-demand schema loading, which is what the former
+// sglang_chat_template adapter enabled implicitly.
+func namespaceRouteConfig(t *testing.T, baseURL string) string {
+	t.Helper()
+	return fmt.Sprintf(`{
+      "listen": {"host": "127.0.0.1", "port": 4317},
+      "native": {"chatgpt_base_url": "http://127.0.0.1:1", "api_base_url": "http://127.0.0.1:1", "models": ["gpt-native"]},
+      "routes": [{"name":"local","base_url":%q,"models":["routed-model"],
+        "reasoning":{"adapter":"reasoning_to_chat_template","supported_efforts":["high"],
+          "chat_template_kwargs":{"thinking":{"none":false,"high":true}}},
+        "tools":{"namespace_adapter":"namespace_to_functions","schema_loading":"on_demand"}}]
+    }`, baseURL)
+}
+
+// toolsOnlyRouteConfig enables a tools adapter without any reasoning adapter,
+// with the requested schema loading mode.
+func toolsOnlyRouteConfig(t *testing.T, baseURL, schemaLoading string) string {
+	t.Helper()
+	return fmt.Sprintf(`{
+      "listen": {"host": "127.0.0.1", "port": 4317},
+      "native": {"chatgpt_base_url": "http://127.0.0.1:1", "api_base_url": "http://127.0.0.1:1", "models": ["gpt-native"]},
+      "routes": [{"name":"local","base_url":%q,"models":["routed-model"],
+        "tools":{"namespace_adapter":"namespace_to_functions","schema_loading":%q}}]
+    }`, baseURL, schemaLoading)
+}
+
+// TestReasoningAndToolsAdaptersAreIndependent proves through the forwarded
+// upstream payload that the two adapters are configured separately: a
+// reasoning adapter never flattens namespace tools, and a tools adapter never
+// injects chat_template_kwargs.
+func TestReasoningAndToolsAdaptersAreIndependent(t *testing.T) {
+	reasoning := `"reasoning":{"adapter":"reasoning_to_chat_template","supported_efforts":["high"],` +
+		`"chat_template_kwargs":{"thinking":{"none":false,"high":true}}}`
+	namespaced := `"tools":{"namespace_adapter":"namespace_to_functions"}`
+
+	cases := []struct {
+		name              string
+		routeExtra        string
+		wantKwargs        bool
+		wantReasoningGone bool
+		wantFlattened     bool
+		wantLoader        bool
+	}{
+		{"neither", ``, false, false, false, false},
+		{"reasoning only", reasoning, true, true, false, false},
+		{"namespace only", namespaced, false, false, true, false},
+		{"namespace only on_demand", `"tools":{"namespace_adapter":"namespace_to_functions","schema_loading":"on_demand"}`, false, false, true, true},
+		{"reasoning and namespace", reasoning + "," + namespaced, true, true, true, false},
+		{"reasoning and namespace on_demand", reasoning + "," + `"tools":{"namespace_adapter":"namespace_to_functions","schema_loading":"on_demand"}`, true, true, true, true},
+	}
+
+	// One request carrying both a reasoning effort and a namespace tool group;
+	// each case must observe only the effects its route enables. The upstream
+	// answers with a valid empty Responses document, which on_demand disclosure
+	// requires before it can hand a response back to Codex.
+	payload := `{"model":"routed-model","reasoning":{"effort":"high"},"tools":` + namespaceTools + `,"input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"hi"}]}]}`
+
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			local := newUpstream(t, func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"id":"resp_mock","object":"response","status":"completed","output":[]}`))
+			})
+			routeFields := `"name":"local","base_url":` + fmt.Sprintf("%q", local.server.URL) + `,"models":["routed-model"]`
+			if testCase.routeExtra != "" {
+				routeFields += "," + testCase.routeExtra
+			}
+			configText := `{
+      "listen": {"host": "127.0.0.1", "port": 4317},
+      "native": {"chatgpt_base_url": "http://127.0.0.1:1", "api_base_url": "http://127.0.0.1:1", "models": ["gpt-native"]},
+      "routes": [{` + routeFields + `}]
+    }`
+			router, _ := newRouter(t, configText, nil)
+			recorder := doRequest(router, http.MethodPost, "/v1/responses", json.RawMessage(payload), nil)
+			if recorder.Code != http.StatusOK {
+				t.Fatalf("status = %d: %s", recorder.Code, recorder.Body.String())
+			}
+			forwarded := string(local.requests()[0].Body)
+
+			_, kwargsPresent := containsField(t, forwarded, "chat_template_kwargs")
+			if kwargsPresent != testCase.wantKwargs {
+				t.Fatalf("chat_template_kwargs present = %v, want %v: %s", kwargsPresent, testCase.wantKwargs, forwarded)
+			}
+			if kwargsPresent && !strings.Contains(forwarded, `"thinking":true`) {
+				t.Fatalf("the configured kwarg was not injected: %s", forwarded)
+			}
+			_, reasoningPresent := containsField(t, forwarded, "reasoning")
+			if reasoningPresent == testCase.wantReasoningGone {
+				t.Fatalf("reasoning present = %v, want gone = %v: %s", reasoningPresent, testCase.wantReasoningGone, forwarded)
+			}
+			namespaceKept := strings.Contains(forwarded, `"type":"namespace"`)
+			flattened := !namespaceKept
+			if flattened != testCase.wantFlattened {
+				t.Fatalf("flattened = %v, want %v: %s", flattened, testCase.wantFlattened, forwarded)
+			}
+			hasLoader := strings.Contains(forwarded, `"router_load_tools"`)
+			if hasLoader != testCase.wantLoader {
+				t.Fatalf("loader tool present = %v, want %v: %s", hasLoader, testCase.wantLoader, forwarded)
+			}
+			// With the eager (or no) tools adapter the flattened schema is visible;
+			// with on_demand the child schema stays hidden behind the loader.
+			schemaVisible := strings.Contains(forwarded, `"mcp__node_repl__js"`)
+			if schemaVisible != (testCase.wantFlattened && !testCase.wantLoader) {
+				t.Fatalf("namespace child schema visible = %v: %s", schemaVisible, forwarded)
+			}
+			// The conversation always survives.
+			if !strings.Contains(forwarded, "hi") {
+				t.Fatalf("the message content was lost: %s", forwarded)
+			}
+		})
+	}
+}
+
+// containsField reports whether the top-level JSON object carries key, and
+// returns its raw value.
+func containsField(t *testing.T, body, key string) (string, bool) {
+	t.Helper()
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(body), &fields); err != nil {
+		t.Fatalf("forwarded body is not JSON: %v (%s)", err, body)
+	}
+	raw, ok := fields[key]
+	return string(raw), ok
+}
+
+// TestNamespaceSchemaLoadingAllSendsFullInventory pins the eager half of
+// tools.schema_loading: with all, the flattened namespace schemas travel with
+// the request and no loader tool exists.
+func TestNamespaceSchemaLoadingAllSendsFullInventory(t *testing.T) {
+	local := newUpstream(t, nil)
+	configText := fmt.Sprintf(`{
+      "listen": {"host": "127.0.0.1", "port": 4317},
+      "native": {"chatgpt_base_url": "http://127.0.0.1:1", "api_base_url": "http://127.0.0.1:1", "models": ["gpt-native"]},
+      "routes": [{"name":"local","base_url":%q,"models":["routed-model"],
+        "tools":{"namespace_adapter":"namespace_to_functions"}}]
+    }`, local.server.URL)
+	router, _ := newRouter(t, configText, nil)
+	body := jsonBody(t, map[string]any{
+		"model": "routed-model",
+		"tools": json.RawMessage(namespaceTools),
+		"input": []any{map[string]any{"type": "message", "role": "user", "content": "hi"}},
+	})
+	recorder := doRequest(router, http.MethodPost, "/v1/responses", body, nil)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", recorder.Code, recorder.Body.String())
+	}
+	forwarded := string(local.requests()[0].Body)
+	// The full flattened inventory: both the core tool and the namespace child.
+	for _, want := range []string{`"exec_command"`, `"mcp__node_repl__js"`, `"code"`} {
+		if !strings.Contains(forwarded, want) {
+			t.Fatalf("the full schema inventory was not sent (missing %s): %s", want, forwarded)
+		}
+	}
+	if strings.Contains(forwarded, "router_load_tools") {
+		t.Fatalf("schema_loading=all must not add a loader tool: %s", forwarded)
+	}
 }

@@ -58,7 +58,7 @@ error messages:
     "models": [
       {
         "id": "qwen3-32b",
-        "route": "sglang",
+        "route": "lab-qwen3-32b",
         "display_name": "Qwen3 32B (lab)",
         "description": "Self-hosted on the lab GPU box",
         "context_window": 131072,
@@ -72,17 +72,17 @@ error messages:
   },
   "routes": [
     {
-      "name": "sglang",
+      "name": "lab-qwen3-32b",
       "base_url": "http://127.0.0.1:30000/v1",
       "models": ["qwen3-32b"],
       "auth": {
-        "api_key_env": "SGLANG_API_KEY",
+        "api_key_env": "LAB_QWEN3_API_KEY",
         "header": "Authorization",
         "scheme": "bearer"
       },
       "extra_headers": {},
       "reasoning": {
-        "adapter": "sglang_chat_template",
+        "adapter": "reasoning_to_chat_template",
         "supported_efforts": ["none", "low", "medium", "high"],
         "unknown_effort": "drop",
         "forward_reasoning": false,
@@ -98,6 +98,10 @@ error messages:
         "custom_tools": "map_to_function_calls",
         "developer_role_as_system": true,
         "unknown_items": "drop"
+      },
+      "tools": {
+        "namespace_adapter": "namespace_to_functions",
+        "schema_loading": "on_demand"
       },
       "response_header_timeout_seconds": 120
     }
@@ -205,6 +209,7 @@ at load time, as are two routes claiming the same ID.
 | `routes[].extra_headers`            | `{}`       | Fixed headers added to every request to this route        |
 | `routes[].reasoning`                | `none`     | Reasoning translation; see below                         |
 | `routes[].input`                    | see below  | Policy for items a generic server cannot use             |
+| `routes[].tools`                    | see below  | Namespace tool translation; independent of `reasoning`  |
 | `routes[].response_header_timeout_seconds` | `120` | Bound on waiting for response headers; `-1` disables |
 
 `base_url` may be `http://127.0.0.1:30000`, `http://127.0.0.1:30000/v1`, or an
@@ -234,15 +239,23 @@ disables the bound.
 
 | Key                                    | Default  | Meaning                                                    |
 | -------------------------------------- | -------- | ------------------------------------------------------------ |
-| `adapter`                              | `none`   | `none` or `sglang_chat_template`                            |
+| `adapter`                              | `none`   | `none` or `reasoning_to_chat_template`                    |
 | `supported_efforts`                    | inferred | Efforts this route accepts; keys the per-effort maps        |
 | `unknown_effort`                       | `drop`   | `drop` uses the server default; `error` refuses the request |
 | `forward_reasoning`                    | `false`  | Keep the `reasoning` object for the upstream                |
-| `chat_template_kwargs`                 | unset    | Required by `sglang_chat_template`                          |
+| `chat_template_kwargs`                 | unset    | Required by `reasoning_to_chat_template`                    |
 
-`adapter: "none"` forwards the body unchanged, which is right for a server that
-already speaks the Responses API: the `reasoning` object, including `effort`,
-reaches that server as Codex sent it.
+The adapter only converts reasoning to `chat_template_kwargs`; it never changes
+tool declarations. The former `sglang_chat_template` adapter name, which also
+enabled namespace flattening and on-demand schema loading, is no longer
+accepted: configuring it fails with a pointer to `reasoning.adapter:
+"reasoning_to_chat_template"`, `tools.namespace_adapter:
+"namespace_to_functions"`, and `tools.schema_loading: "on_demand"`, which is
+the equivalent explicit configuration.
+
+`adapter: "none"` leaves the reasoning fields unchanged, which is right for a
+server that already speaks the Responses API: the `reasoning` object, including
+`effort`, reaches that server as Codex sent it.
 
 `chat_template_kwargs` values are either literal, sent unchanged for every
 effort, or per-effort maps keyed by effort. A key mapped to `null` is omitted for
@@ -258,7 +271,7 @@ With `supported_efforts` set, an effort outside that list follows
 with `400`. Leaving it unset uses the keys present in a per-effort map, or every
 effort when all values are literal.
 
-`sglang_chat_template` deletes the `reasoning` object unless
+`reasoning_to_chat_template` deletes the `reasoning` object unless
 `forward_reasoning: true`, because some strict servers reject a top-level field
 they do not model; the effort is then expressed only through
 `chat_template_kwargs`. Independently of the adapter, an `include` value naming
@@ -279,17 +292,27 @@ curl -s http://127.0.0.1:30000/v1/chat/completions \
 If the reply changes with `enable_thinking`, the router injects that key for the
 efforts you map to `false`.
 
-## `routes[].input`
+## `routes[].tools`
 
-### Namespace tools on SGLang routes
+| Key                 | Default | Meaning                                                      |
+| ------------------- | ------- | ------------------------------------------------------------ |
+| `namespace_adapter` | `none`  | `none` or `namespace_to_functions`                           |
+| `schema_loading`    | `all`   | `all` sends every flattened schema; `on_demand` adds a loader |
 
-Routes using `reasoning.adapter: "sglang_chat_template"` also translate
-Responses `namespace` tool groups into top-level `function` tools. This handles
-SGLang versions whose Responses-to-chat conversion skips namespace groups,
-making grouped MCP tools invisible even when their servers are connected.
-No additional configuration is needed for those routes.
+`namespace_adapter: "namespace_to_functions"` translates Responses `namespace`
+tool groups into top-level `function` tools. This handles servers, including
+SGLang versions whose Responses-to-chat conversion skips namespace groups, that
+would otherwise make grouped MCP tools invisible even when their servers are
+connected. The setting is independent of `routes[].reasoning`: a reasoning
+adapter alone never flattens tools, and a tools adapter alone never touches
+`chat_template_kwargs`. `schema_loading: "on_demand"` requires
+`namespace_to_functions` and is refused at load time otherwise.
 
-The adapter initially sends core top-level tools and a compact namespace
+With `schema_loading: "all"` (the default), the whole flattened schema
+inventory travels with every request and no loader tool exists.
+
+With `schema_loading: "on_demand"`, the adapter initially sends core top-level
+tools and a compact namespace
 directory through a synthetic `router_load_tools` function. The model selects
 one to eight namespace names; the router handles this schema-only call locally,
 adds just those groups' function definitions, and continues the upstream
@@ -334,7 +357,9 @@ buffered. An invalid or oversized response fails with `502` before headers are
 sent, or aborts an already-started stream. Initial upstream error responses pass
 through; a failed internal follow-up produces `502` or aborts an active stream.
 
-### Input item policies
+## `routes[].input`
+
+### Item policies
 
 Codex sends conversation state that a generic server cannot interpret. Each
 policy is `drop` or `reject`, and `reject` returns `400` naming the item type. A

@@ -95,7 +95,8 @@ def main():
         config = {'listen': {'host': '127.0.0.1', 'port': port}, 'routes': [{
             'name': 'mock', 'base_url': f'http://127.0.0.1:{server.server_port}/v1',
             'models': ['gpt-5.4'], 'compaction': {'adapter': 'text_summary'},
-            'reasoning': {'adapter': 'sglang_chat_template', 'chat_template_kwargs': {'enable_thinking': False}}}]}
+            'reasoning': {'adapter': 'reasoning_to_chat_template', 'chat_template_kwargs': {'enable_thinking': False}},
+            'tools': {'namespace_adapter': 'namespace_to_functions', 'schema_loading': 'on_demand'}}]}
         (root / 'router.json').write_text(json.dumps(config))
         (root / 'auth.json').write_text(json.dumps({'OPENAI_API_KEY': 'mock-test'}))
         (root / 'config.toml').write_text(

@@ -6,15 +6,15 @@ self-hosted Responses API models from one Codex model selector.
 ## Status
 
 Implemented: exact model routing, native credential forwarding, isolated remote
-credentials, streaming, request limits, SGLang reasoning and namespace-tool adaptation, combined
+credentials, streaming, request limits, reasoning and namespace-tool adaptation, combined
 catalog generation and platform service lifecycle commands (macOS LaunchAgent
 and Linux systemd user service).
 
-For `sglang_chat_template` routes, a compact namespace directory lets the model
-load only needed groups of function schemas, instead of receiving the full MCP
-inventory on every request. Function-call responses and
-replayed history retain Codex's namespace identities across JSON and SSE.
-See [namespace tools](docs/configuration.md#namespace-tools-on-sglang-routes).
+Routes with `tools.schema_loading: "on_demand"` get a compact namespace
+directory that lets the model load only needed groups of function schemas,
+instead of receiving the full MCP inventory on every request. Function-call
+responses and replayed history retain Codex's namespace identities across JSON
+and SSE. See [tools](docs/configuration.md#routestools).
 
 Routes can also opt into [text checkpoints for remote compaction v2](docs/configuration.md#text-checkpoints-for-remote-compaction-v2), using the selected upstream model to summarize context while Codex owns history replacement and persistence.
 
@@ -55,7 +55,7 @@ Edit `config.local.json` before proceeding:
   `nvidia/Qwen3.8-Flash-Next-NVFP4`.
 - Supply `base_instructions` or `catalog.base_instructions_file` when your native
   catalog has no instructions to inherit. Set `routes[].reasoning.supported_efforts`
-  once for the SGLang adapter and the generated picker options. Set each catalog
+  once for the reasoning adapter and the generated picker options. Set each catalog
   model’s `default_reasoning_level` to a member of that list. Remove the former
   `catalog.models[].reasoning_levels` field when upgrading.
 

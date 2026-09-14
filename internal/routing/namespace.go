@@ -64,7 +64,8 @@ func (m *namespaceMapping) alias(id toolIdentity) string {
 }
 
 // flattenNamespaces bridges Responses namespaces to the function-only tool
-// surface used by SGLang. Unrelated top-level tools are left as received.
+// surface used by servers without namespace support. Unrelated top-level tools
+// are left as received.
 func flattenNamespaces(fields map[string]json.RawMessage) (*namespaceMapping, *requestError) {
 	m := &namespaceMapping{
 		aliases: make(map[toolIdentity]string), originals: make(map[string]toolIdentity),
@@ -110,7 +111,7 @@ func flattenNamespaces(fields map[string]json.RawMessage) (*namespaceMapping, *r
 				return nil, err
 			}
 			if fn.string("type") != "function" || fn.string("name") == "" {
-				return nil, clientError(http.StatusBadRequest, "unsupported_namespace_tool", "SGLang namespaces require named function tools")
+				return nil, clientError(http.StatusBadRequest, "unsupported_namespace_tool", "namespace tools require named function tools")
 			}
 			id := toolIdentity{namespace, fn.string("name")}
 			if seen[id] {
@@ -236,8 +237,8 @@ func (m *namespaceMapping) restoreFields(fields toolFields) error {
 		}
 		fields["output"], _ = json.Marshal(output)
 	}
-	// SGLang may echo the request's flattened tool definitions in response
-	// metadata. Return the original definitions and selector to Codex.
+	// The upstream may echo the request's flattened tool definitions in
+	// response metadata. Return the original definitions and selector to Codex.
 	if fields.string("object") == "response" || fields["output"] != nil {
 		if fields["tools"] != nil && m.originalTools != nil {
 			fields["tools"] = m.originalTools
