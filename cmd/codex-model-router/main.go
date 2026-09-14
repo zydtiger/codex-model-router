@@ -301,6 +301,7 @@ func describeRoutes(w io.Writer, cfg *config.Config, address string) {
 		fmt.Fprintf(w, "  route %-14s POST %s/responses\n", route.Name, route.BaseURL)
 		fmt.Fprintf(w, "    %-14s %s\n", "models:", strings.Join(route.Models, ", "))
 		fmt.Fprintf(w, "    %-14s %s\n", "reasoning:", describeReasoning(route))
+		fmt.Fprintf(w, "    %-14s %s\n", "tools:", describeTools(route))
 		fmt.Fprintf(w, "    %-14s %s\n", "credential:", describeAuth(route))
 	}
 	fmt.Fprintf(w, "  native           %s\n", cfg.Native.ChatGPTBaseURL)
@@ -321,20 +322,37 @@ func describeAuth(route config.Route) string {
 func describeReasoning(route config.Route) string {
 	switch route.Reasoning.Adapter {
 	case config.AdapterNone, "":
-		return "none (the request body is forwarded unchanged)"
-	case config.AdapterSGLangChatTemplate:
+		return "none (the reasoning fields are forwarded unchanged)"
+	case config.AdapterReasoningToChatTemplate:
 		if len(route.Reasoning.ChatTemplateKwargs) == 0 {
-			return "sglang_chat_template with no chat_template_kwargs (nothing is injected)"
+			return "reasoning_to_chat_template with no chat_template_kwargs (nothing is injected)"
 		}
 		keys := make([]string, 0, len(route.Reasoning.ChatTemplateKwargs))
 		for key := range route.Reasoning.ChatTemplateKwargs {
 			keys = append(keys, key)
 		}
 		sortStrings(keys)
-		return fmt.Sprintf("sglang_chat_template: chat_template_kwargs{%s}", strings.Join(keys, ", "))
+		return fmt.Sprintf("reasoning_to_chat_template: chat_template_kwargs{%s}", strings.Join(keys, ", "))
 	default:
 		return route.Reasoning.Adapter
 	}
+}
+
+// describeTools reports the route's tool translation settings independently of
+// the reasoning adapter.
+func describeTools(route config.Route) string {
+	adapter := route.Tools.NamespaceAdapter
+	if adapter == "" || adapter == config.NamespaceAdapterNone {
+		return "none (tool declarations are forwarded unchanged)"
+	}
+	loading := route.Tools.SchemaLoading
+	if loading == "" {
+		loading = config.SchemaLoadingAll
+	}
+	if loading == config.SchemaLoadingAll {
+		return adapter + ", schema_loading=all (full flattened schema inventory is sent)"
+	}
+	return adapter + ", schema_loading=" + loading + " (a loader tool discloses schemas on demand)"
 }
 
 // cmdValidate reports what a configuration means without opening a port.
@@ -373,7 +391,11 @@ func cmdValidate(args []string, stdout io.Writer) error {
 				"base_url":  route.BaseURL,
 				"models":    route.Models,
 				"reasoning": route.Reasoning.Adapter,
-				"auth":      describeAuth(route),
+				"tools": map[string]any{
+					"namespace_adapter": route.Tools.NamespaceAdapter,
+					"schema_loading":    route.Tools.SchemaLoading,
+				},
+				"auth": describeAuth(route),
 			})
 		}
 		return writeJSON(stdout, map[string]any{

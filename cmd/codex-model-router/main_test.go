@@ -100,7 +100,7 @@ func newWorkspace(t *testing.T) *workspace {
     "base_instructions_file": "` + filepath.ToSlash(instructions) + `",
     "models": [{
       "id": "qwen3-32b",
-      "route": "sglang",
+      "route": "lab-qwen3-32b",
       "display_name": "Qwen3 32B (lab)",
       "context_window": 131072,
       "default_reasoning_level": "medium",
@@ -108,17 +108,21 @@ func newWorkspace(t *testing.T) *workspace {
     }]
   },
   "routes": [{
-    "name": "sglang",
+    "name": "lab-qwen3-32b",
     "base_url": "` + upstream.URL + `/v1",
     "models": ["qwen3-32b"],
     "reasoning": {
-      "adapter": "sglang_chat_template",
+      "adapter": "reasoning_to_chat_template",
       "supported_efforts": ["none", "low", "medium", "high"],
       "chat_template_kwargs": {
         "enable_thinking": {"none": false, "low": true, "medium": true, "high": true},
         "reasoning_effort": {"none": null, "low": "low", "medium": "medium", "high": "high"},
         "preserve_thinking": true
       }
+    },
+    "tools": {
+      "namespace_adapter": "namespace_to_functions",
+      "schema_loading": "on_demand"
     }
   }]
 }`
@@ -184,14 +188,41 @@ func TestValidate(t *testing.T) {
 			t.Fatalf("validate output is missing %q:\n%s", want, out)
 		}
 	}
+	// The reasoning and tools adapters are reported independently.
+	for _, want := range []string{
+		"reasoning:", "reasoning_to_chat_template",
+		"tools:", "namespace_to_functions", "schema_loading=on_demand",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("validate output is missing %q:\n%s", want, out)
+		}
+	}
 
 	jsonOut := mustRun(t, exitOK, "validate", "--config", work.configPath, "--json")
-	var summary map[string]any
+	var summary struct {
+		OK     bool   `json:"ok"`
+		Listen string `json:"listen"`
+		Routes []struct {
+			Name      string `json:"name"`
+			Reasoning string `json:"reasoning"`
+			Tools     struct {
+				NamespaceAdapter string `json:"namespace_adapter"`
+				SchemaLoading    string `json:"schema_loading"`
+			} `json:"tools"`
+		} `json:"routes"`
+	}
 	if err := json.Unmarshal([]byte(jsonOut), &summary); err != nil {
 		t.Fatalf("--json output is not JSON: %v\n%s", err, jsonOut)
 	}
-	if summary["ok"] != true || summary["listen"] != "127.0.0.1:4317" {
-		t.Fatalf("summary = %v", summary)
+	if !summary.OK || summary.Listen != "127.0.0.1:4317" || len(summary.Routes) != 1 {
+		t.Fatalf("summary = %s", jsonOut)
+	}
+	route := summary.Routes[0]
+	if route.Name != "lab-qwen3-32b" ||
+		route.Reasoning != "reasoning_to_chat_template" ||
+		route.Tools.NamespaceAdapter != "namespace_to_functions" ||
+		route.Tools.SchemaLoading != "on_demand" {
+		t.Fatalf("route summary lost the independent adapters: %s", jsonOut)
 	}
 
 	broken := filepath.Join(work.dir, "broken.json")

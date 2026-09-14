@@ -348,13 +348,13 @@ func (h *Router) selectTarget(r *http.Request, model string, body *decodedBody, 
 		if err != nil {
 			return nil, err
 		}
-		if route.Reasoning.Adapter == config.AdapterSGLangChatTemplate {
+		if route.Tools.NamespaceAdapter == config.NamespaceAdapterNamespaceToFunctions {
 			mapping, err := flattenNamespaces(translated)
 			if err != nil {
 				return nil, err
 			}
 			state.namespaces = mapping
-			if compaction == nil {
+			if compaction == nil && route.Tools.SchemaLoading == config.SchemaLoadingOnDemand {
 				state.disclosure = prepareToolDisclosure(translated, mapping)
 			}
 			if state.disclosure != nil {

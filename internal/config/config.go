@@ -37,8 +37,25 @@ const (
 
 // Adapter names accepted by Route.Reasoning.Adapter.
 const (
-	AdapterNone               = "none"
-	AdapterSGLangChatTemplate = "sglang_chat_template"
+	AdapterNone                    = "none"
+	AdapterReasoningToChatTemplate = "reasoning_to_chat_template"
+)
+
+// legacySGLangChatTemplate is the pre-split reasoning adapter name. It tied
+// reasoning translation to namespace flattening and on-demand schema loading;
+// configuring it now fails with a migration pointer.
+const legacySGLangChatTemplate = "sglang_chat_template"
+
+// Values accepted by Route.Tools.NamespaceAdapter.
+const (
+	NamespaceAdapterNone                 = "none"
+	NamespaceAdapterNamespaceToFunctions = "namespace_to_functions"
+)
+
+// Values accepted by Route.Tools.SchemaLoading.
+const (
+	SchemaLoadingAll      = "all"
+	SchemaLoadingOnDemand = "on_demand"
 )
 
 // Item policy names accepted by Route.Input.
@@ -117,6 +134,7 @@ type Route struct {
 	Reasoning  Reasoning         `json:"reasoning"`
 	Input      Input             `json:"input"`
 	Compaction Compaction        `json:"compaction"`
+	Tools      Tools             `json:"tools"`
 	// ResponseHeaderTimeoutSeconds bounds the wait for upstream response
 	// headers. Zero uses the default; -1 disables the bound. Generation time is
 	// never bounded, because headers arrive before the model finishes.
@@ -150,7 +168,7 @@ type Reasoning struct {
 	UnknownEffort string `json:"unknown_effort"`
 	// ForwardReasoning keeps the Codex reasoning object for the upstream.
 	ForwardReasoning bool `json:"forward_reasoning"`
-	// ChatTemplateKwargs is used by AdapterSGLangChatTemplate. A value that is
+	// ChatTemplateKwargs is used by AdapterReasoningToChatTemplate. A value that is
 	// a JSON object is treated as a per-effort map; any other value is sent
 	// literally. A null effort value omits the key for that effort.
 	ChatTemplateKwargs map[string]json.RawMessage `json:"chat_template_kwargs"`
@@ -171,6 +189,19 @@ type Input struct {
 	// Default drop, which prevents sending unmodelled state to a server that
 	// cannot validate it.
 	UnknownItems string `json:"unknown_items"`
+}
+
+// Tools selects how Codex tool declarations are translated for a route. The
+// settings are independent of Reasoning: configuring a reasoning adapter never
+// enables a tools adapter.
+type Tools struct {
+	// NamespaceAdapter flattens Responses namespace tools into plain
+	// function tools. Default none.
+	NamespaceAdapter string `json:"namespace_adapter"`
+	// SchemaLoading controls when namespace function schemas reach the
+	// upstream: all sends them with the request, on_demand exposes a loader
+	// tool instead. Default all. on_demand requires namespace_to_functions.
+	SchemaLoading string `json:"schema_loading"`
 }
 
 // Catalog configures combined model catalog generation.
@@ -680,15 +711,29 @@ func (r *Route) validate() error {
 		r.Reasoning.Adapter = AdapterNone
 	case AdapterNone:
 		r.Reasoning.ChatTemplateKwargs = nil
-	case AdapterSGLangChatTemplate:
+	case AdapterReasoningToChatTemplate:
 		if len(r.Reasoning.ChatTemplateKwargs) == 0 {
-			return errors.New("reasoning.chat_template_kwargs is required for the sglang_chat_template adapter")
+			return errors.New("reasoning.chat_template_kwargs is required for the reasoning_to_chat_template adapter")
 		}
 		if err := validateEffortMaps(r.Reasoning.ChatTemplateKwargs); err != nil {
 			return fmt.Errorf("reasoning.chat_template_kwargs: %w", err)
 		}
+	case legacySGLangChatTemplate:
+		return fmt.Errorf(
+			"reasoning.adapter %q was replaced by %q with independent tools settings; set reasoning.adapter=%q, tools.namespace_adapter=%q, and tools.schema_loading=%q to keep the previous behavior",
+			legacySGLangChatTemplate, AdapterReasoningToChatTemplate, AdapterReasoningToChatTemplate,
+			NamespaceAdapterNamespaceToFunctions, SchemaLoadingOnDemand)
 	default:
 		return fmt.Errorf("reasoning.adapter %q is unknown", r.Reasoning.Adapter)
+	}
+	if err := normalizePolicy(&r.Tools.NamespaceAdapter, NamespaceAdapterNone, NamespaceAdapterNamespaceToFunctions); err != nil {
+		return fmt.Errorf("tools.namespace_adapter: %w", err)
+	}
+	if err := normalizePolicy(&r.Tools.SchemaLoading, SchemaLoadingAll, SchemaLoadingOnDemand); err != nil {
+		return fmt.Errorf("tools.schema_loading: %w", err)
+	}
+	if r.Tools.SchemaLoading == SchemaLoadingOnDemand && r.Tools.NamespaceAdapter != NamespaceAdapterNamespaceToFunctions {
+		return fmt.Errorf("tools.schema_loading %q requires tools.namespace_adapter %q", SchemaLoadingOnDemand, NamespaceAdapterNamespaceToFunctions)
 	}
 	if err := normalizeEffortPolicy(&r.Reasoning.UnknownEffort); err != nil {
 		return fmt.Errorf("reasoning.unknown_effort: %w", err)

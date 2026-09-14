@@ -12,24 +12,24 @@ import (
 // applyReasoningAdapter translates Codex's reasoning request into the shape the
 // route's server expects.
 //
-// AdapterNone leaves the request untouched, which is correct for servers that
-// implement the Responses reasoning field. AdapterSGLangChatTemplate converts
-// reasoning.effort into explicitly configured chat_template_kwargs, so a
-// thinking model can be driven from the Codex thinking selector, including
-// turning thinking off.
+// AdapterNone leaves the reasoning fields untouched, which is correct for
+// servers that implement the Responses reasoning field.
+// AdapterReasoningToChatTemplate converts reasoning.effort into explicitly
+// configured chat_template_kwargs, so a thinking model can be driven from the
+// Codex thinking selector, including turning thinking off.
 func applyReasoningAdapter(fields map[string]json.RawMessage, route *config.Route) (bool, *requestError) {
 	switch route.Reasoning.Adapter {
 	case config.AdapterNone:
 		return false, nil
-	case config.AdapterSGLangChatTemplate:
-		return applySGLangChatTemplate(fields, route)
+	case config.AdapterReasoningToChatTemplate:
+		return applyReasoningToChatTemplate(fields, route)
 	default:
 		// config.Validate rejects unknown adapters, so this is unreachable.
 		return false, clientError(http.StatusInternalServerError, "adapter_misconfigured", "reasoning adapter %q is not supported", route.Reasoning.Adapter)
 	}
 }
 
-func applySGLangChatTemplate(fields map[string]json.RawMessage, route *config.Route) (bool, *requestError) {
+func applyReasoningToChatTemplate(fields map[string]json.RawMessage, route *config.Route) (bool, *requestError) {
 	rawReasoning, present := fields["reasoning"]
 	effort := ""
 	if present {

@@ -162,7 +162,7 @@ func TestDisclosureHTTPRoundTrip(t *testing.T) {
 				mockDisclosureResponse(w, stream, round, []json.RawMessage{disclosureCall("mcp__node_repl__js", `{"code":"6*7"}`, "real")})
 			}))
 			defer up.Close()
-			router, _ := newRouter(t, sglangRouteConfig(t, up.URL), nil)
+			router, _ := newRouter(t, namespaceRouteConfig(t, up.URL), nil)
 			fields := disclosureRequest(t)
 			fields["stream"], _ = json.Marshal(stream)
 			body, _ := json.Marshal(fields)
@@ -222,7 +222,7 @@ func TestDisclosureMixedCallsReturnToClient(t *testing.T) {
 				disclosureCall("exec_command", `{"cmd":"true"}`, "real"),
 			})
 		})
-		router, _ := newRouter(t, sglangRouteConfig(t, up.server.URL), nil)
+		router, _ := newRouter(t, namespaceRouteConfig(t, up.server.URL), nil)
 		body, _ := json.Marshal(disclosureRequest(t))
 		res := doRequest(router, http.MethodPost, "/v1/responses", body, nil)
 		if up.count() != 1 || strings.Contains(res.Body.String(), `"call_id":"load"`) || !strings.Contains(res.Body.String(), `"call_id":"real"`) {
@@ -235,7 +235,7 @@ func TestDisclosureBoundedInvalidSelections(t *testing.T) {
 	up := newUpstream(t, func(w http.ResponseWriter, r *http.Request) {
 		mockDisclosureResponse(w, false, 1, []json.RawMessage{disclosureCall("router_load_tools", `{"namespaces":["wrong"]}`, "load")})
 	})
-	router, _ := newRouter(t, sglangRouteConfig(t, up.server.URL), nil)
+	router, _ := newRouter(t, namespaceRouteConfig(t, up.server.URL), nil)
 	body, _ := json.Marshal(disclosureRequest(t))
 	res := doRequest(router, http.MethodPost, "/v1/responses", body, nil)
 	if res.Code != 502 || up.count() != maxDisclosureRounds+1 {
@@ -262,7 +262,7 @@ func TestDisclosureCancellationDuringFollowup(t *testing.T) {
 		}
 	}))
 	defer up.Close()
-	cfg, _ := config.Parse([]byte(sglangRouteConfig(t, up.URL)))
+	cfg, _ := config.Parse([]byte(namespaceRouteConfig(t, up.URL)))
 	router, _ := New(cfg, Options{})
 	srv := httptest.NewServer(router)
 	defer srv.Close()
@@ -309,7 +309,7 @@ func TestDisclosureConcurrentIsolation(t *testing.T) {
 		mockDisclosureResponse(w, false, 2, []json.RawMessage{})
 	}))
 	defer up.Close()
-	cfg, _ := config.Parse([]byte(sglangRouteConfig(t, up.URL)))
+	cfg, _ := config.Parse([]byte(namespaceRouteConfig(t, up.URL)))
 	router, _ := New(cfg, Options{})
 	var wg sync.WaitGroup
 	for _, tag := range []string{"mcp__node_repl", "unrelated_mail", "mcp__node_repl", "unrelated_mail"} {
@@ -361,7 +361,7 @@ func TestDisclosureHonorsOutputBudgetAndReasoningPolicy(t *testing.T) {
 
 func TestDisclosureRejectsManagedHistoryBeforeForwarding(t *testing.T) {
 	up := newUpstream(t, nil)
-	router, _ := newRouter(t, sglangRouteConfig(t, up.server.URL), nil)
+	router, _ := newRouter(t, namespaceRouteConfig(t, up.server.URL), nil)
 	for _, key := range []string{"previous_response_id", "conversation"} {
 		fields := disclosureRequest(t)
 		fields[key] = json.RawMessage(`"provider_id"`)
@@ -385,7 +385,7 @@ func TestDisclosureFollowupFailureAndRequestLimit(t *testing.T) {
 			w.WriteHeader(503)
 			_, _ = w.Write([]byte("unavailable"))
 		})
-		router, _ := newRouter(t, sglangRouteConfig(t, up.server.URL), nil)
+		router, _ := newRouter(t, namespaceRouteConfig(t, up.server.URL), nil)
 		body, _ := json.Marshal(disclosureRequest(t))
 		res := doRequest(router, http.MethodPost, "/v1/responses", body, nil)
 		if round != 2 {

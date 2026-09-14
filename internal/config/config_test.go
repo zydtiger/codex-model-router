@@ -247,7 +247,7 @@ func TestAuthSchemeAndEnvNameValidation(t *testing.T) {
 }
 
 func TestReasoningAdapterValidation(t *testing.T) {
-	missing := strings.Replace(minimal(t), `"models": ["qwen3"]`, `"models": ["qwen3"], "reasoning": {"adapter": "sglang_chat_template"}`, 1)
+	missing := strings.Replace(minimal(t), `"models": ["qwen3"]`, `"models": ["qwen3"], "reasoning": {"adapter": "reasoning_to_chat_template"}`, 1)
 	if message := parseError(t, missing); !strings.Contains(message, "chat_template_kwargs") {
 		t.Fatalf("error = %s", message)
 	}
@@ -256,13 +256,72 @@ func TestReasoningAdapterValidation(t *testing.T) {
 		t.Fatalf("error = %s", message)
 	}
 	nested := strings.Replace(minimal(t), `"models": ["qwen3"]`,
-		`"models": ["qwen3"], "reasoning": {"adapter": "sglang_chat_template", "chat_template_kwargs": {"enable_thinking": {"low": {"nested": true}}}}`, 1)
+		`"models": ["qwen3"], "reasoning": {"adapter": "reasoning_to_chat_template", "chat_template_kwargs": {"enable_thinking": {"low": {"nested": true}}}}`, 1)
 	if message := parseError(t, nested); !strings.Contains(message, "scalar") {
 		t.Fatalf("error = %s, want a scalar-value complaint", message)
 	}
 	badPolicy := strings.Replace(minimal(t), `"models": ["qwen3"]`,
 		`"models": ["qwen3"], "reasoning": {"adapter": "none", "unknown_effort": "guess"}`, 1)
 	if message := parseError(t, badPolicy); !strings.Contains(message, "unknown_effort") {
+		t.Fatalf("error = %s", message)
+	}
+}
+
+// TestLegacySGLangAdapterFailsWithMigrationPointer pins the removal of the old
+// coupled adapter name: it must fail with the replacement settings, not parse.
+func TestLegacySGLangAdapterFailsWithMigrationPointer(t *testing.T) {
+	legacy := strings.Replace(minimal(t), `"models": ["qwen3"]`,
+		`"models": ["qwen3"], "reasoning": {"adapter": "sglang_chat_template", "chat_template_kwargs": {"enable_thinking": {"low": true}}}`, 1)
+	message := parseError(t, legacy)
+	for _, want := range []string{
+		"sglang_chat_template", "reasoning_to_chat_template",
+		"namespace_to_functions", "on_demand",
+	} {
+		if !strings.Contains(message, want) {
+			t.Fatalf("error = %s, want a pointer to %q", message, want)
+		}
+	}
+}
+
+func TestToolsAdapterValidation(t *testing.T) {
+	// The omitted block defaults to no namespace adapter and eager schemas.
+	cfg := parse(t, minimal(t))
+	if cfg.Routes[0].Tools.NamespaceAdapter != config.NamespaceAdapterNone {
+		t.Fatalf("namespace_adapter default = %q", cfg.Routes[0].Tools.NamespaceAdapter)
+	}
+	if cfg.Routes[0].Tools.SchemaLoading != config.SchemaLoadingAll {
+		t.Fatalf("schema_loading default = %q", cfg.Routes[0].Tools.SchemaLoading)
+	}
+
+	valid := strings.Replace(minimal(t), `"models": ["qwen3"]`,
+		`"models": ["qwen3"], "tools": {"namespace_adapter": "namespace_to_functions", "schema_loading": "on_demand"}`, 1)
+	cfg = parse(t, valid)
+	if cfg.Routes[0].Tools.NamespaceAdapter != config.NamespaceAdapterNamespaceToFunctions ||
+		cfg.Routes[0].Tools.SchemaLoading != config.SchemaLoadingOnDemand {
+		t.Fatalf("tools = %+v", cfg.Routes[0].Tools)
+	}
+	// schema_loading defaults to all on its own.
+	eager := strings.Replace(minimal(t), `"models": ["qwen3"]`,
+		`"models": ["qwen3"], "tools": {"namespace_adapter": "namespace_to_functions"}`, 1)
+	if cfg := parse(t, eager); cfg.Routes[0].Tools.SchemaLoading != config.SchemaLoadingAll {
+		t.Fatalf("schema_loading default = %q", cfg.Routes[0].Tools.SchemaLoading)
+	}
+
+	badAdapter := strings.Replace(minimal(t), `"models": ["qwen3"]`,
+		`"models": ["qwen3"], "tools": {"namespace_adapter": "flatten"}`, 1)
+	if message := parseError(t, badAdapter); !strings.Contains(message, "tools.namespace_adapter") {
+		t.Fatalf("error = %s", message)
+	}
+	badLoading := strings.Replace(minimal(t), `"models": ["qwen3"]`,
+		`"models": ["qwen3"], "tools": {"schema_loading": "lazy"}`, 1)
+	if message := parseError(t, badLoading); !strings.Contains(message, "tools.schema_loading") {
+		t.Fatalf("error = %s", message)
+	}
+	// on_demand without namespace flattening is rejected, because the loader
+	// only speaks in flattened function names.
+	lonely := strings.Replace(minimal(t), `"models": ["qwen3"]`,
+		`"models": ["qwen3"], "tools": {"schema_loading": "on_demand"}`, 1)
+	if message := parseError(t, lonely); !strings.Contains(message, "requires tools.namespace_adapter") {
 		t.Fatalf("error = %s", message)
 	}
 }
