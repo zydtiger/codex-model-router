@@ -122,6 +122,7 @@ func newWorkspace(t *testing.T) *workspace {
     },
     "tools": {
       "namespace_adapter": "namespace_to_functions",
+      "custom_adapter": "custom_to_functions",
       "schema_loading": "on_demand"
     }
   }]
@@ -192,6 +193,7 @@ func TestValidate(t *testing.T) {
 	for _, want := range []string{
 		"reasoning:", "reasoning_to_chat_template",
 		"tools:", "namespace_to_functions", "schema_loading=on_demand",
+		"custom_to_functions",
 	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("validate output is missing %q:\n%s", want, out)
@@ -207,6 +209,7 @@ func TestValidate(t *testing.T) {
 			Reasoning string `json:"reasoning"`
 			Tools     struct {
 				NamespaceAdapter string `json:"namespace_adapter"`
+				CustomAdapter    string `json:"custom_adapter"`
 				SchemaLoading    string `json:"schema_loading"`
 			} `json:"tools"`
 		} `json:"routes"`
@@ -221,6 +224,7 @@ func TestValidate(t *testing.T) {
 	if route.Name != "lab-qwen3-32b" ||
 		route.Reasoning != "reasoning_to_chat_template" ||
 		route.Tools.NamespaceAdapter != "namespace_to_functions" ||
+		route.Tools.CustomAdapter != "custom_to_functions" ||
 		route.Tools.SchemaLoading != "on_demand" {
 		t.Fatalf("route summary lost the independent adapters: %s", jsonOut)
 	}

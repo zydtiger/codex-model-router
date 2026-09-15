@@ -326,6 +326,38 @@ func TestToolsAdapterValidation(t *testing.T) {
 	}
 }
 
+func TestCustomAdapterValidation(t *testing.T) {
+	// The omitted block defaults to no custom adapter.
+	cfg := parse(t, minimal(t))
+	if cfg.Routes[0].Tools.CustomAdapter != config.CustomAdapterNone {
+		t.Fatalf("custom_adapter default = %q", cfg.Routes[0].Tools.CustomAdapter)
+	}
+
+	valid := strings.Replace(minimal(t), `"models": ["qwen3"]`,
+		`"models": ["qwen3"], "tools": {"custom_adapter": "custom_to_functions"}`, 1)
+	cfg = parse(t, valid)
+	if cfg.Routes[0].Tools.CustomAdapter != config.CustomAdapterCustomToFunctions {
+		t.Fatalf("custom_adapter = %q", cfg.Routes[0].Tools.CustomAdapter)
+	}
+
+	unknown := strings.Replace(minimal(t), `"models": ["qwen3"]`,
+		`"models": ["qwen3"], "tools": {"custom_adapter": "bridge"}`, 1)
+	if message := parseError(t, unknown); !strings.Contains(message, "tools.custom_adapter") {
+		t.Fatalf("error = %s, want a tools.custom_adapter refusal", message)
+	}
+
+	// The adapter needs the shared history translation policy; silently
+	// switching a conflicting policy would change what history reaches the
+	// upstream.
+	for _, policy := range []string{"keep", "drop", "reject"} {
+		conflict := strings.Replace(minimal(t), `"models": ["qwen3"]`,
+			`"models": ["qwen3"], "input": {"custom_tools": "`+policy+`"}, "tools": {"custom_adapter": "custom_to_functions"}`, 1)
+		if message := parseError(t, conflict); !strings.Contains(message, "input.custom_tools") {
+			t.Fatalf("policy %q error = %s, want an input.custom_tools conflict", policy, message)
+		}
+	}
+}
+
 func TestInputPoliciesAreValidated(t *testing.T) {
 	text := strings.Replace(minimal(t), `"models": ["qwen3"]`, `"models": ["qwen3"], "input": {"reasoning_items": "explode"}`, 1)
 	if message := parseError(t, text); !strings.Contains(message, "reasoning_items") {

@@ -297,6 +297,7 @@ efforts you map to `false`.
 | Key                 | Default | Meaning                                                      |
 | ------------------- | ------- | ------------------------------------------------------------ |
 | `namespace_adapter` | `none`  | `none` or `namespace_to_functions`                           |
+| `custom_adapter`    | `none`  | `none` or `custom_to_functions`                              |
 | `schema_loading`    | `all`   | `all` sends every flattened schema; `on_demand` adds a loader |
 
 `namespace_adapter: "namespace_to_functions"` translates Responses `namespace`
@@ -342,6 +343,57 @@ instead of silently disappearing. Native routes and other adapters keep their
 existing tool representation. This implements router-managed schema discovery,
 not OpenAI's native `tool_search` protocol. It does not add vision, code-mode or
 remote-compaction support to a model.
+
+`custom_adapter: "custom_to_functions"` bridges Responses custom tools, both
+top-level declarations and custom children inside `namespace` groups, to plain
+function tools for servers without custom-tool support. Each declaration
+becomes a function with exactly one required string property `input`
+(`additionalProperties: false`); the name and description are retained.
+`format: {type: text}` and omitted formats map directly. A
+`format: {type: grammar, syntax, definition}` travels verbatim in the function
+description as model-facing guidance: the router performs no grammar engine,
+constrained decoding, or grammar validation, so the upstream may still produce
+input that does not satisfy the grammar. Other format types are refused with
+`400`.
+
+Replayed `custom_tool_call` and `custom_tool_call_output` history travels
+upstream as function traffic with the exact input string, IDs, call IDs,
+namespaces, and output data preserved; a historical call does not need an
+active declaration in the current request. Explicit `custom` tool_choice
+selectors, including entries inside `allowed_tools`, are translated to function
+selectors; duplicate custom tool identities and selectors that name no declared
+custom tool are refused rather than converted ambiguously. `none`, `auto`, and
+`required` semantics are unchanged. Enabling the adapter requires
+`input.custom_tools: "map_to_function_calls"` (the default); other policies are
+rejected at load time. With the adapter off, existing behavior is unchanged
+except that replayed custom calls now preserve their namespace.
+
+Model-returned function calls are bridged back to `custom_tool_call` items only
+when their `(namespace, name)` identity matches a custom declaration in the
+current request; ordinary function tools are never reinterpreted. The bridged
+`arguments` wrapper must be a JSON object containing exactly one string
+`input`; a missing, mistyped, or extra-key wrapper fails with `502` (or aborts
+an active stream) instead of emitting a malformed executable call. Responses
+echo the original custom tool declarations and `tool_choice`. The adapter
+composes with `namespace_to_functions` and both schema loading modes: custom
+preparation runs before namespace flattening, and custom restoration runs after
+namespace restoration. Compaction summary passes stay tool-free while custom
+history survives summarization as function traffic.
+
+In SSE streams, `response.output_item.added`/`done` items and the
+`response.function_call_arguments` events of bridged calls are rewritten to
+`custom_tool_call` items and `response.custom_tool_call_input.delta`/`done`
+events. Call identity is tracked from the added item, so deltas that carry only
+`item_id`/`output_index` are handled. Custom input is validated once the
+complete arguments wrapper is available: the input is emitted as one delta
+followed by the done event rather than streamed token by token, and per-call
+argument buffering and retained call state share a `max_request_bytes` budget.
+Each tracked call has a fixed metadata allowance as well as its string payload,
+so even calls with empty input consume the budget. Suppressed
+and injected events are compensated by renumbering `sequence_number`
+monotonically across the adapted stream, and `event:` names stay in sync with
+the rewritten payloads. A stream that ends with an incomplete bridged call, or
+a completion that omits one, fails rather than reporting success.
 
 Disclosure requires full replayed input, as used by Codex. Requests with
 `previous_response_id` or `conversation` return `400`, because provider-managed

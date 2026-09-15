@@ -52,6 +52,12 @@ const (
 	NamespaceAdapterNamespaceToFunctions = "namespace_to_functions"
 )
 
+// Values accepted by Route.Tools.CustomAdapter.
+const (
+	CustomAdapterNone              = "none"
+	CustomAdapterCustomToFunctions = "custom_to_functions"
+)
+
 // Values accepted by Route.Tools.SchemaLoading.
 const (
 	SchemaLoadingAll      = "all"
@@ -198,6 +204,9 @@ type Tools struct {
 	// NamespaceAdapter flattens Responses namespace tools into plain
 	// function tools. Default none.
 	NamespaceAdapter string `json:"namespace_adapter"`
+	// CustomAdapter bridges Responses custom tools to function tools for
+	// servers without custom-tool support. Default none.
+	CustomAdapter string `json:"custom_adapter"`
 	// SchemaLoading controls when namespace function schemas reach the
 	// upstream: all sends them with the request, on_demand exposes a loader
 	// tool instead. Default all. on_demand requires namespace_to_functions.
@@ -747,6 +756,13 @@ func (r *Route) validate() error {
 	}
 	if err := normalizePolicy(&r.Input.CustomTools, PolicyMap, PolicyKeep, PolicyDrop, PolicyReject); err != nil {
 		return fmt.Errorf("input.custom_tools: %w", err)
+	}
+	if err := normalizePolicy(&r.Tools.CustomAdapter, CustomAdapterNone, CustomAdapterCustomToFunctions); err != nil {
+		return fmt.Errorf("tools.custom_adapter: %w", err)
+	}
+	if r.Tools.CustomAdapter == CustomAdapterCustomToFunctions && r.Input.CustomTools != PolicyMap {
+		return fmt.Errorf("tools.custom_adapter %q requires input.custom_tools %q, not %q",
+			CustomAdapterCustomToFunctions, PolicyMap, r.Input.CustomTools)
 	}
 	if err := normalizePolicy(&r.Input.UnknownItems, PolicyDrop, PolicyKeep, PolicyReject); err != nil {
 		return fmt.Errorf("input.unknown_items: %w", err)

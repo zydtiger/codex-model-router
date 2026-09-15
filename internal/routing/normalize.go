@@ -375,6 +375,14 @@ func translateCustomTool(item json.RawMessage, index int) (json.RawMessage, *req
 		converted["type"] = "function_call"
 		converted["name"] = name
 		converted["arguments"] = string(arguments)
+		// Keep the namespace so a later namespace flattening pass can map the
+		// replayed call to the same alias it allocates for the declaration.
+		if raw, ok := fields["namespace"]; ok {
+			var namespace string
+			if err := json.Unmarshal(raw, &namespace); err == nil && namespace != "" {
+				converted["namespace"] = namespace
+			}
+		}
 	}
 
 	encoded, err := json.Marshal(converted)

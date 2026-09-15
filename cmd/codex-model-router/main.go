@@ -342,17 +342,26 @@ func describeReasoning(route config.Route) string {
 // the reasoning adapter.
 func describeTools(route config.Route) string {
 	adapter := route.Tools.NamespaceAdapter
-	if adapter == "" || adapter == config.NamespaceAdapterNone {
+	custom := route.Tools.CustomAdapter
+	if (adapter == "" || adapter == config.NamespaceAdapterNone) && (custom == "" || custom == config.CustomAdapterNone) {
 		return "none (tool declarations are forwarded unchanged)"
 	}
-	loading := route.Tools.SchemaLoading
-	if loading == "" {
-		loading = config.SchemaLoadingAll
+	parts := make([]string, 0, 2)
+	if adapter != "" && adapter != config.NamespaceAdapterNone {
+		loading := route.Tools.SchemaLoading
+		if loading == "" {
+			loading = config.SchemaLoadingAll
+		}
+		if loading == config.SchemaLoadingAll {
+			parts = append(parts, adapter+", schema_loading=all (full flattened schema inventory is sent)")
+		} else {
+			parts = append(parts, adapter+", schema_loading="+loading+" (a loader tool discloses schemas on demand)")
+		}
 	}
-	if loading == config.SchemaLoadingAll {
-		return adapter + ", schema_loading=all (full flattened schema inventory is sent)"
+	if custom != "" && custom != config.CustomAdapterNone {
+		parts = append(parts, custom+" (custom tools are bridged to function calls)")
 	}
-	return adapter + ", schema_loading=" + loading + " (a loader tool discloses schemas on demand)"
+	return strings.Join(parts, "; ")
 }
 
 // cmdValidate reports what a configuration means without opening a port.
@@ -393,6 +402,7 @@ func cmdValidate(args []string, stdout io.Writer) error {
 				"reasoning": route.Reasoning.Adapter,
 				"tools": map[string]any{
 					"namespace_adapter": route.Tools.NamespaceAdapter,
+					"custom_adapter":    route.Tools.CustomAdapter,
 					"schema_loading":    route.Tools.SchemaLoading,
 				},
 				"auth": describeAuth(route),
