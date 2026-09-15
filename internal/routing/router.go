@@ -133,6 +133,7 @@ type requestState struct {
 	result        string
 	warnings      []string
 	namespaces    *namespaceMapping
+	customs       *customMapping
 	disclosure    *toolDisclosure
 	compaction    *compactionRequest
 	responseLimit int64
@@ -340,6 +341,17 @@ func (h *Router) selectTarget(r *http.Request, model string, body *decodedBody, 
 		}
 		state.compaction = compaction
 		state.responseLimit = h.cfg.MaxRequestBytes
+		// Custom-tool preparation runs before the shared history translation so
+		// replayed custom traffic is namespace-safe function history, and its
+		// declaration rewrite happens before namespace flattening records the
+		// tool inventory.
+		if route.Tools.CustomAdapter == config.CustomAdapterCustomToFunctions {
+			customs, err := prepareCustomTools(fields)
+			if err != nil {
+				return nil, err
+			}
+			state.customs = customs
+		}
 		translated, stats, err := translateRemoteBody(fields, route)
 		if err != nil {
 			return nil, err
@@ -381,7 +393,7 @@ func (h *Router) selectTarget(r *http.Request, model string, body *decodedBody, 
 		if err != nil {
 			return nil, err
 		}
-		if state.namespaces != nil || compaction != nil {
+		if state.namespaces != nil || state.customs != nil || compaction != nil {
 			headers.Set("Accept-Encoding", "identity")
 		}
 		state.body = encoded
@@ -515,7 +527,16 @@ func (t *target) modifyResponse(resp *http.Response) error {
 			}
 		}
 		if state.namespaces != nil {
-			return adaptNamespaceResponse(resp, state.namespaces, state.responseLimit)
+			if err := adaptNamespaceResponse(resp, state.namespaces, state.responseLimit); err != nil {
+				return err
+			}
+		}
+		// Custom restoration runs last, on namespace-restored identities, and
+		// never replaces the tool-free compaction summary above.
+		if state.customs != nil {
+			if err := adaptCustomResponse(resp, state.customs, state.responseLimit); err != nil {
+				return err
+			}
 		}
 	}
 	return nil

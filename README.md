@@ -6,7 +6,8 @@ self-hosted Responses API models from one Codex model selector.
 ## Status
 
 Implemented: exact model routing, native credential forwarding, isolated remote
-credentials, streaming, request limits, reasoning and namespace-tool adaptation, combined
+credentials, streaming, request limits, reasoning and namespace-tool adaptation,
+custom-tool bridging to function-only upstreams, combined
 catalog generation and platform service lifecycle commands (macOS LaunchAgent
 and Linux systemd user service).
 

@@ -46,6 +46,7 @@
       },
       "tools": {
         "namespace_adapter": "namespace_to_functions",
+        "custom_adapter": "custom_to_functions",
         "schema_loading": "on_demand"
       },
       "response_header_timeout_seconds": 0
