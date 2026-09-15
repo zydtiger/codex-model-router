@@ -13,6 +13,8 @@ The default installation uses your home directory and does not require `sudo`. `
 | LaunchAgent plist             | `~/Library/LaunchAgents/com.github.zydtiger.codex-model-router.plist` |
 | Router logs                   | `~/Library/Logs/com.github.zydtiger.codex-model-router/`           |
 | Binary the agent runs         | `~/.local/lib/codex-model-router/codex-model-router`               |
+| Router configuration          | `~/.local/lib/codex-model-router/config.json`                      |
+| Generated model catalog       | `~/.local/lib/codex-model-router/catalog.json`                     |
 | Label                         | `com.github.zydtiger.codex-model-router`                           |
 | launchd domain                | `gui/<uid>` of the current user                                    |
 
@@ -27,13 +29,13 @@ passed with `--env`; nothing is hardcoded here.
 
 ## Install
 
-```sh
-go build -o bin/codex-model-router ./cmd/codex-model-router
-mkdir -p ~/.local/lib/codex-model-router
-cp bin/codex-model-router ~/.local/lib/codex-model-router/
+Follow [setup](../README.md#setup) to install the binary, edit `config.json`,
+and generate `catalog.json` in the installation directory. The CLI defaults to
+that `config.json`; `catalog.output_file` is `catalog.json`.
 
-codex-model-router service preview          # read the plist before installing
-codex-model-router service install
+```sh
+~/.local/lib/codex-model-router/codex-model-router service preview
+~/.local/lib/codex-model-router/codex-model-router service install
 ```
 
 Install runs `launchctl bootout gui/<uid>/<label>` first, to clear a previously

@@ -59,7 +59,7 @@
   ],
   "catalog": {
     "native_catalog_file": "",
-    "output_file": "",
+    "output_file": "catalog.json",
     "base_instructions_file": "",
     "description": "Self-hosted model",
     "models": [

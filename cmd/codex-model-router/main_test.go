@@ -84,7 +84,7 @@ func newWorkspace(t *testing.T) *workspace {
 	if err := os.WriteFile(instructions, []byte("You are a coding agent on a lab server.\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	configPath := filepath.Join(dir, "router.json")
+	configPath := filepath.Join(dir, "config.json")
 	body := `{
   "listen": {"host": "127.0.0.1", "port": 4317},
   "log": {"level": "warn"},
@@ -96,7 +96,7 @@ func newWorkspace(t *testing.T) *workspace {
   },
   "catalog": {
     "native_catalog_file": "` + filepath.ToSlash(nativeCatalog) + `",
-    "output_file": "` + filepath.ToSlash(filepath.Join(dir, "model-catalog.json")) + `",
+    "output_file": "catalog.json",
     "base_instructions_file": "` + filepath.ToSlash(instructions) + `",
     "models": [{
       "id": "qwen3-32b",
@@ -133,7 +133,7 @@ func newWorkspace(t *testing.T) *workspace {
 	return &workspace{
 		dir:        dir,
 		configPath: configPath,
-		catalog:    filepath.Join(dir, "model-catalog.json"),
+		catalog:    filepath.Join(dir, "catalog.json"),
 		upstream:   upstream.URL,
 		calls:      calls,
 	}
@@ -525,6 +525,44 @@ func TestConfigurationIsFoundThroughTheEnvironment(t *testing.T) {
 	t.Setenv("CODEX_MODEL_ROUTER_CONFIG", filepath.Join(work.dir, "absent.json"))
 	if code, _, _ := runCLI(t, "validate"); code != exitConfig {
 		t.Fatalf("a missing env configuration exited %d, want %d", code, exitConfig)
+	}
+	// An explicit path still takes precedence over the environment override.
+	mustRun(t, exitOK, "validate", "--config", work.configPath)
+}
+
+func TestInstalledConfigurationAndCatalog(t *testing.T) {
+	work := newWorkspace(t)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("CODEX_MODEL_ROUTER_CONFIG", "")
+	t.Setenv("CODEX_MODEL_ROUTER_BIN", "")
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Chdir(t.TempDir())
+	directory := filepath.Join(home, ".local", "lib", "codex-model-router")
+	path := filepath.Join(directory, "config.json")
+	if err := os.MkdirAll(directory, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(work.configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	mustRun(t, exitOK, "validate")
+	mustRun(t, exitOK, "catalog", "generate")
+	generated := filepath.Join(directory, "catalog.json")
+	catalogData, err := os.ReadFile(generated)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count, err := catalog.CountModels(catalogData); err != nil || count != 2 {
+		t.Fatalf("installed catalog has %d entries: %v", count, err)
+	}
+	preview := mustRun(t, exitOK, "service", "preview")
+	if !strings.Contains(preview, path) || !strings.Contains(preview, filepath.Join(directory, "codex-model-router")) {
+		t.Fatalf("service does not use the installed runtime paths:\n%s", preview)
 	}
 }
 

@@ -10,8 +10,12 @@ In order of precedence:
 
 1. `--config <path>` on any subcommand.
 2. `$CODEX_MODEL_ROUTER_CONFIG`.
-3. `$XDG_CONFIG_HOME/codex-model-router/config.json`, or
-   `~/.config/codex-model-router/config.json`.
+3. `~/.local/lib/codex-model-router/config.json`.
+
+The installation directory contains the binary, `config.json`, and generated
+`catalog.json`. Set `catalog.output_file` to `catalog.json` so the output stays
+beside the configuration. See [setup](../README.md#setup) for installation and
+temporary native catalog inputs.
 
 `codex-model-router catalog print-example --out <path>` writes a documented
 starting point. `codex-model-router validate` checks a file without opening a
@@ -50,8 +54,8 @@ error messages:
     "models": []
   },
   "catalog": {
-    "native_catalog_file": "/absolute/path/to/native-catalog.json",
-    "output_file": "/absolute/path/to/model-catalog.json",
+    "native_catalog_file": "/absolute/temporary/directory/native.json",
+    "output_file": "catalog.json",
     "native_model_ids_from_catalog": true,
     "base_instructions_file": "",
     "description": "",
@@ -443,6 +447,11 @@ choice when silent loss is worse than a visible failure.
 | `catalog.native_model_ids_from_catalog` | `true` | Import non-remote slugs from the combined output at startup          |
 | `catalog.base_instructions_file`  | `""`    | File used for `base_instructions`                             |
 
+The installed configuration and printed example set `catalog.output_file` to
+`"catalog.json"`. `catalog generate --out <path>` overrides the configured output.
+If both the flag and the configuration value are empty, generation writes JSON
+to stdout; it does not choose another filename.
+
 `base_instructions` is not optional in practice. Codex requires `base_instructions` or
 `model_messages.instructions` on every entry, and the Codex model cache carries neither
 for the entries it stores, so with a real cache each local model needs its own
@@ -454,7 +463,7 @@ refuses to write the file.
 Each entry in `catalog.models` needs `id` and `route`. `display_name`,
 `context_window`, `default_reasoning_level`, `tool_capable`,
 `priority`, `description`, and `base_instructions` are described in
-[the README](../README.md#model-catalog). `route` must name one of `routes[]`,
+[the README](../README.md#setup). `route` must name one of `routes[]`,
 which is what ties picker entry to upstream. `id` must not also appear in
 `native.models`. Picker reasoning levels come from the route’s
 `reasoning.supported_efforts`, in the declared order. Declare that list once for
@@ -478,8 +487,9 @@ native model.
 - `catalog.native_catalog_file`, `catalog.output_file`,
   and `catalog.base_instructions_file` paths are expanded
   (`~`) and resolved relative to the configuration file's directory, and
-  `codex-model-router validate` prints them absolute. `catalog.output_file` must
-  be an absolute path, because Codex has to read it from wherever it runs.
+  `codex-model-router validate` prints them absolute. Use `catalog.json` in the
+  router configuration and its resolved absolute installation path for Codex's
+  `model_catalog_json` setting.
 
 ## After editing
 
@@ -489,7 +499,7 @@ compiled routing table. It is the fastest way to see what your configuration
 actually means, and it never contacts an upstream:
 
 ```sh
-codex-model-router validate --config /path/to/config.json
+codex-model-router validate
 ```
 
 ## Migration and rollback

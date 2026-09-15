@@ -126,14 +126,11 @@ func defaultConfigPath() (string, error) {
 	if fromEnv := os.Getenv("CODEX_MODEL_ROUTER_CONFIG"); fromEnv != "" {
 		return filepath.Abs(fromEnv)
 	}
-	if base := os.Getenv("XDG_CONFIG_HOME"); base != "" {
-		return filepath.Join(base, "codex-model-router", "config.json"), nil
-	}
-	home, err := os.UserHomeDir()
+	directory, err := service.DefaultInstallDir()
 	if err != nil {
 		return "", fmt.Errorf("no home directory; pass --config: %w", err)
 	}
-	return filepath.Join(home, ".config", "codex-model-router", "config.json"), nil
+	return filepath.Join(directory, "config.json"), nil
 }
 
 // loadConfig resolves the --config value and loads the file.
@@ -213,7 +210,7 @@ func parseFlags(flags *flag.FlagSet, args []string) error {
 // registerConfigFlag adds the flags shared by the commands that read a file.
 func registerConfigFlag(flags *flag.FlagSet) *string {
 	var path string
-	flags.StringVar(&path, "config", "", "router configuration JSON (default: $CODEX_MODEL_ROUTER_CONFIG or ~/.config/codex-model-router/config.json)")
+	flags.StringVar(&path, "config", "", "router configuration JSON (default: $CODEX_MODEL_ROUTER_CONFIG or ~/.local/lib/codex-model-router/config.json)")
 	return &path
 }
 
@@ -456,7 +453,7 @@ func cmdCatalog(args []string, stdout io.Writer) error {
 	subcommand, rest := args[0], args[1:]
 	flags := flag.NewFlagSet("catalog "+subcommand, flag.ContinueOnError)
 	configPath := registerConfigFlag(flags)
-	out := flags.String("out", "", "write to this path instead of stdout")
+	out := flags.String("out", "", "write to this path (generate defaults to catalog.output_file, then stdout)")
 	if err := parseFlags(flags, rest); err != nil {
 		return err
 	}

@@ -8,8 +8,10 @@ session. The installer does not enable lingering or alter system-wide services.
 ## Installation
 
 Install the binary and your configuration into `~/.local/lib/codex-model-router/`.
-Keep the generated catalog there as `config.catalog.json`. Preserve personal
-configuration when replacing the binary.
+Keep the generated catalog there as `catalog.json`, with `catalog.output_file`
+set to `catalog.json` in `config.json`. See [setup](../README.md#setup) to build
+and populate this directory. Preserve personal configuration when replacing
+the binary. The CLI defaults to this installed `config.json`.
 
 ```sh
 ~/.local/lib/codex-model-router/codex-model-router service preview \

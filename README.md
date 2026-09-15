@@ -32,24 +32,46 @@ installation have not been verified. Recheck integration after Codex updates.
 GOTOOLCHAIN=go1.27.1 go build -o bin/codex-model-router ./cmd/codex-model-router
 ```
 
-Examples below assume the binary is on `PATH`. Use `--help` on each subcommand
-for its flags.
+Use `--help` on each subcommand for its flags.
 
 ## Setup
 
+Keep the runtime files together in `~/.local/lib/codex-model-router/`:
+`codex-model-router`, `config.json`, and `catalog.json`. Install the build there;
+upgrades replace only the binary and preserve your configuration and catalog.
+
 ```sh
-codex-model-router catalog print-example --out config.local.json
-codex debug models --bundled > config.local.native.json
+router_dir="$HOME/.local/lib/codex-model-router"
+mkdir -p "$router_dir"
+cp bin/codex-model-router "$router_dir/codex-model-router.new"
+mv "$router_dir/codex-model-router.new" "$router_dir/codex-model-router"
+export PATH="$router_dir:$PATH"
 ```
 
-Edit `config.local.json` before proceeding:
+On first setup, create `config.json` if it does not already exist:
+
+```sh
+test -e "$router_dir/config.json" ||
+  codex-model-router catalog print-example --out "$router_dir/config.json"
+```
+
+Export the native catalog to a temporary directory when generating or refreshing
+the combined catalog:
+
+```sh
+native_dir="$(mktemp -d)"
+codex debug models --bundled > "$native_dir/native.json"
+printf '%s\n' "$native_dir/native.json"
+```
+
+Edit the installed `config.json` before proceeding:
 
 - Set `routes[].base_url` and exact `routes[].models` IDs for your server.
 - Remove routes you do not use. If authentication is unnecessary, omit `auth`;
   otherwise set the environment variable named by `auth.api_key_env`.
-- Set `catalog.native_catalog_file` to `config.local.native.json` and
-  `catalog.output_file` to `config.local.catalog.json`. Relative catalog paths
-  resolve from the configuration file's directory.
+- Set `catalog.native_catalog_file` to the absolute temporary path printed above.
+  Keep `catalog.output_file` set to `catalog.json`, as in the example. Relative
+  catalog paths resolve from the configuration file's directory.
 - Set each catalog model's `id` and `route` to the corresponding route. Set
   `display_name` to the label you want in the selector, independently of its ID.
   For example, `Qwen-3.8 Flash Next` can label
@@ -61,28 +83,38 @@ Edit `config.local.json` before proceeding:
   `catalog.models[].reasoning_levels` field when upgrading.
 
 ```sh
-codex-model-router validate --config config.local.json
-codex-model-router catalog generate --config config.local.json
-codex -c 'model_catalog_json="/absolute/path/config.local.catalog.json"' debug models
-codex-model-router serve --config config.local.json
+codex-model-router validate
+codex-model-router catalog generate
+codex -c "model_catalog_json=\"$router_dir/catalog.json\"" debug models
 ```
+
+After successful generation, clear `catalog.native_catalog_file` to `""` in
+`config.json` and remove the temporary directory with `rm -r "$native_dir"`.
+The runtime reads the generated `catalog.json` instead of the native input.
+Repeat the export and generation steps when you want to refresh native models.
+
+The CLI defaults to the installed `config.json`, independent of the current
+directory. `--config` or `CODEX_MODEL_ROUTER_CONFIG` can select another file.
+Start the router in the foreground with `codex-model-router serve`, or use the
+platform service commands below.
 
 With the router running, edit the active Codex configuration yourself or ask your
 agent to do it. Back up the file and review the diff. Set these root keys:
 
 ```toml
 openai_base_url = "http://127.0.0.1:4317/v1"
-model_catalog_json = "/absolute/path/config.local.catalog.json"
+model_catalog_json = "/absolute/home/.local/lib/codex-model-router/catalog.json"
 ```
 
-Use the actual listener URL and absolute catalog path. For native authentication,
-remove a root custom `model_provider` override if present, preserving unrelated
+Replace `/absolute/home` with your home directory and use the actual listener URL.
+For native authentication, remove a root custom `model_provider` override if
+present, preserving unrelated
 settings. The router does not edit Codex configuration or manage its backups.
 Restart Codex to reload the catalog. Keep the router running while Codex points
 at it, including for native models. See [Codex setup](docs/codex-desktop.md).
 
-For login startup and crash recovery, install a stable copy of the binary and
-use `service preview`, `service install`, `service status`, and `service uninstall`.
+For login startup and crash recovery, use `service preview`, `service install`,
+`service status`, and `service uninstall` with the installed binary.
 See [launchd setup](docs/launchd.md) or [systemd setup](docs/systemd.md) for paths
 and environment handling.
 Service configuration belongs to this repository. No Docker container is required.
@@ -94,8 +126,8 @@ including non-remote IDs imported from the combined catalog, go to the native up
 Unknown IDs are rejected without contacting either provider. Matching is exact.
 
 The native catalog is a generation input, not a startup dependency. Deploy the
-binary, router configuration, and generated combined catalog. Keep the native
-catalog only where you regenerate catalogs; refresh it from Codex when needed.
+binary, `config.json`, and generated `catalog.json` in the installation directory.
+Export a fresh temporary native catalog from Codex when regenerating.
 When catalog ID import is enabled, generate `catalog.output_file` before starting
 the service. Missing or malformed combined catalogs stop startup.
 
@@ -143,7 +175,9 @@ to off, and log rotation is not provided.
 - [LaunchAgent lifecycle](docs/launchd.md)
 - [Systemd user service](docs/systemd.md)
 
-Machine-specific `config.local.*` files, binaries, and logs are ignored by Git.
+Keep personal runtime files in the installation directory, outside the checkout.
+Root-level `config.json` and `catalog.json`, build outputs, and logs are ignored
+by Git.
 
 ## Development
 

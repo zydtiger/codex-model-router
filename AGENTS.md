@@ -14,12 +14,13 @@ are introduced. Read `README.md` before changing behavior.
 
 ## Installation layout
 
-Prefer a self-contained per-user installation in `~/.local/lib/codex-model-router/`:
-`codex-model-router`, `config.json`, and generated `config.catalog.json`.
+Use a self-contained per-user installation in `~/.local/lib/codex-model-router/`:
+`codex-model-router`, `config.json`, and generated `catalog.json`.
 Edit the installed configuration directly and preserve it during binary upgrades.
 Runtime paths in the service definition and Codex configuration must reference
-this installation, never a source checkout. Pass `--config` explicitly when
-using this layout; the CLI's fallback config location may differ.
+this installation, never a source checkout. The CLI defaults to the installed
+`config.json`; set `catalog.output_file` to `catalog.json` so it resolves beside
+the configuration. Use `--config` for an explicit alternate configuration.
 Keep native catalog generation inputs temporary; they are not runtime dependencies.
 Keep service definitions and logs in the platform's service/log locations, outside
 the installation directory. Do not put personal deployment files in Git.

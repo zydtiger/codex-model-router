@@ -15,10 +15,6 @@ import (
 	"github.com/zydtiger/codex-model-router/internal/config"
 )
 
-// Filename is the conventional name for the generated catalog next to the Codex
-// config file.
-const Filename = "codex-model-router-catalog.json"
-
 // EffortDescriptions are the picker descriptions for reasoning levels. Codex
 // requires a description per effort.
 var EffortDescriptions = map[string]string{
