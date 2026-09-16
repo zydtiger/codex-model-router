@@ -33,8 +33,7 @@ const Version = "0.1.0"
 const HealthPath = "/healthz"
 
 // responsesSuffix is the model endpoint namespace Codex appends to
-// openai_base_url. Only this namespace is forwarded; every other path is
-// refused so the process cannot be used as a general proxy.
+// openai_base_url. The standalone web tool has a separate native-only endpoint.
 const responsesSuffix = "/responses"
 
 // accountIDHeader selects the native ChatGPT backend. Its presence, not a
@@ -280,8 +279,12 @@ func (h *Router) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.reject(w, http.StatusUpgradeRequired, "upgrade_required", "this router serves the HTTP Responses transport")
 		return
 	}
+	if rest == "/alpha/search" {
+		h.serveWebSearch(w, r, rest, started)
+		return
+	}
 	if rest != responsesSuffix && !strings.HasPrefix(rest, responsesSuffix+"/") {
-		h.reject(w, http.StatusNotFound, "not_found", "only the Responses endpoint is proxied")
+		h.reject(w, http.StatusNotFound, "not_found", "only Responses and standalone web search endpoints are proxied")
 		return
 	}
 	if r.Method != http.MethodPost {
@@ -316,6 +319,39 @@ func (h *Router) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	state.target = upstream
 
+	proxyRequest := r.WithContext(context.WithValue(r.Context(), stateKey{}, state))
+	recorder := &responseRecorder{ResponseWriter: w}
+	aborted := h.serveProxy(upstream, recorder, proxyRequest)
+	h.finish(recorder, proxyRequest, state, aborted)
+}
+
+// serveWebSearch forwards Codex's standalone web tool without requiring a model
+// or translating its payload. Web requests only go to trusted native upstreams.
+func (h *Router) serveWebSearch(w http.ResponseWriter, r *http.Request, rest string, started time.Time) {
+	if r.Method != http.MethodPost {
+		h.methodNotAllowed(w, http.MethodPost)
+		return
+	}
+	body, err := readBody(r, h.cfg.MaxRequestBytes)
+	if err != nil {
+		h.rejectRequestError(w, err, started, r.Method, rest, "")
+		return
+	}
+	headers, err := applyNativeHeaders(r.Header, h.cfg.PreserveClientAuth(), h.cfg.Native.APIKeyEnv, h.env)
+	if err != nil {
+		h.rejectRequestError(w, err, started, r.Method, rest, "")
+		return
+	}
+	upstream := h.api
+	if strings.TrimSpace(r.Header.Get(accountIDHeader)) != "" {
+		upstream = h.chat
+	}
+	state := &requestState{
+		started: started, method: r.Method, rest: rest,
+		route: upstream.name, target: upstream, body: body.Raw, headers: headers,
+	}
+	h.countRequests.Add(1)
+	h.countNative.Add(1)
 	proxyRequest := r.WithContext(context.WithValue(r.Context(), stateKey{}, state))
 	recorder := &responseRecorder{ResponseWriter: w}
 	aborted := h.serveProxy(upstream, recorder, proxyRequest)
