@@ -153,8 +153,10 @@ its configured endpoint override; API-key and self-hosted routes retain their
 existing process-environment proxy behavior. Restart the router after edits.
 
 The listener and request peers must be loopback. Supported endpoints are
-`GET /healthz` and `POST <base_path>/responses` plus Responses subpaths; the default
-base path is `/v1`. WebSocket upgrades return 426; HTTP fallback depends on the
+`GET /healthz`, `POST <base_path>/responses` plus Responses subpaths, and
+`POST <base_path>/alpha/search` for the standalone web tool; the default base
+path is `/v1`. Standalone web requests preserve their payload and use native
+authentication routing, without requiring a model or contacting self-hosted routes. WebSocket upgrades return 426; HTTP fallback depends on the
 client. The router requires a Responses API upstream and does not implement a
 Chat Completions bridge.
 
