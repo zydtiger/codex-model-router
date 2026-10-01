@@ -10,6 +10,11 @@ import (
 )
 
 func TestPackageReleaseRefusesLightweightTagBeforeWritingArtifacts(t *testing.T) {
+	// Git hooks export repository context that must not reach fixture commands.
+	hookDirectory := t.TempDir()
+	t.Setenv("GIT_DIR", filepath.Join(hookDirectory, "repository.git"))
+	t.Setenv("GIT_WORK_TREE", hookDirectory)
+	t.Setenv("GIT_INDEX_FILE", filepath.Join(hookDirectory, "index"))
 	directory := t.TempDir()
 	runGit(t, directory, "init", "-q")
 	runGit(t, directory, "config", "user.email", "release-test@example.invalid")
@@ -25,6 +30,7 @@ func TestPackageReleaseRefusesLightweightTagBeforeWritingArtifacts(t *testing.T)
 	outputDir := filepath.Join(directory, "dist")
 	command := exec.Command("bash", script, outputDir)
 	command.Dir = directory
+	command.Env = isolatedGitEnvironment()
 	output, err := command.CombinedOutput()
 	if err == nil {
 		t.Fatal("package release accepted a lightweight tag")
@@ -64,6 +70,7 @@ func TestPackageReleaseRefusesExistingChecksumBeforeBuilding(t *testing.T) {
 	}
 	command := exec.Command("bash", filepath.Join(filepath.Dir(source), "..", "..", "scripts", "package-release.sh"), outputDir)
 	command.Dir = directory
+	command.Env = isolatedGitEnvironment()
 	output, err := command.CombinedOutput()
 	if err == nil {
 		t.Fatal("package release replaced an existing checksum")
@@ -113,6 +120,7 @@ func TestPackageReleaseRefusesDanglingArchiveLinkBeforeBuilding(t *testing.T) {
 	}
 	command := exec.Command("bash", filepath.Join(filepath.Dir(source), "..", "..", "scripts", "package-release.sh"), outputDir)
 	command.Dir = directory
+	command.Env = isolatedGitEnvironment()
 	output, err := command.CombinedOutput()
 	if err == nil {
 		t.Fatal("package release replaced a dangling archive link")
@@ -136,8 +144,19 @@ func runGit(t *testing.T, directory string, args ...string) {
 	t.Helper()
 	command := exec.Command("git", args...)
 	command.Dir = directory
+	command.Env = isolatedGitEnvironment()
 	output, err := command.CombinedOutput()
 	if err != nil {
 		t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, output)
 	}
+}
+
+func isolatedGitEnvironment() []string {
+	var environment []string
+	for _, entry := range os.Environ() {
+		if !strings.HasPrefix(entry, "GIT_") {
+			environment = append(environment, entry)
+		}
+	}
+	return environment
 }
