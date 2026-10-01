@@ -3,7 +3,7 @@
 This file is the version history for codex-model-router. Copy the relevant
 released section verbatim into the corresponding GitHub release notes.
 
-## [0.1.0] - Unreleased
+## [0.1.0] - 2026-09-30
 
 ### Added
 
