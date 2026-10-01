@@ -13,6 +13,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"runtime"
@@ -22,6 +23,7 @@ import (
 	"time"
 
 	"github.com/zydtiger/codex-model-router/internal/catalog"
+	"github.com/zydtiger/codex-model-router/internal/codexconfig"
 	"github.com/zydtiger/codex-model-router/internal/config"
 	"github.com/zydtiger/codex-model-router/internal/routing"
 	"github.com/zydtiger/codex-model-router/internal/serve"
@@ -29,7 +31,7 @@ import (
 )
 
 // version is reported by the version subcommand and by /healthz.
-const version = routing.Version
+var version = routing.Version
 
 // Exit codes let a supervisor tell a broken configuration apart from a runtime
 // failure without parsing messages.
@@ -62,6 +64,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		err = cmdValidate(rest, stdout)
 	case "catalog":
 		err = cmdCatalog(rest, stdout)
+	case "setup":
+		err = cmdSetup(rest, stdout)
 	case "service":
 		err = cmdService(rest, stdout)
 	case "healthcheck":
@@ -108,6 +112,7 @@ Commands:
   validate                  Check a configuration without opening a port
   catalog generate          Merge native and self-hosted models into a catalog JSON
   catalog print-example     Print a starting-point configuration
+  setup                     Initialize config, generate a catalog, and install the service
   service preview           Print the platform service definition
   service install           Install and start a user service (macOS/Linux, no sudo)
   service status            Report the service state and router health
@@ -126,11 +131,15 @@ func defaultConfigPath() (string, error) {
 	if fromEnv := os.Getenv("CODEX_MODEL_ROUTER_CONFIG"); fromEnv != "" {
 		return filepath.Abs(fromEnv)
 	}
-	directory, err := service.DefaultInstallDir()
-	if err != nil {
-		return "", fmt.Errorf("no home directory; pass --config: %w", err)
+	base := strings.TrimSpace(os.Getenv("XDG_CONFIG_HOME"))
+	if !filepath.IsAbs(base) {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", fmt.Errorf("no home directory; pass --config: %w", err)
+		}
+		base = filepath.Join(home, ".config")
 	}
-	return filepath.Join(directory, "config.json"), nil
+	return filepath.Join(base, "codex-model-router", "config.json"), nil
 }
 
 // loadConfig resolves the --config value and loads the file.
@@ -210,7 +219,7 @@ func parseFlags(flags *flag.FlagSet, args []string) error {
 // registerConfigFlag adds the flags shared by the commands that read a file.
 func registerConfigFlag(flags *flag.FlagSet) *string {
 	var path string
-	flags.StringVar(&path, "config", "", "router configuration JSON (default: $CODEX_MODEL_ROUTER_CONFIG or ~/.local/lib/codex-model-router/config.json)")
+	flags.StringVar(&path, "config", "", "router configuration JSON (default: $CODEX_MODEL_ROUTER_CONFIG or $XDG_CONFIG_HOME/codex-model-router/config.json)")
 	return &path
 }
 
@@ -454,6 +463,7 @@ func cmdCatalog(args []string, stdout io.Writer) error {
 	flags := flag.NewFlagSet("catalog "+subcommand, flag.ContinueOnError)
 	configPath := registerConfigFlag(flags)
 	out := flags.String("out", "", "write to this path (generate defaults to catalog.output_file, then stdout)")
+	codexBinary := flags.String("codex", "codex", "Codex executable used for bundled native catalog export")
 	if err := parseFlags(flags, rest); err != nil {
 		return err
 	}
@@ -463,6 +473,9 @@ func cmdCatalog(args []string, stdout io.Writer) error {
 
 	switch subcommand {
 	case "print-example":
+		if *codexBinary != "codex" {
+			return fmt.Errorf("%w: --codex applies only to catalog generate", errUsage)
+		}
 		example, err := config.Example()
 		if err != nil {
 			return err
@@ -476,7 +489,14 @@ func cmdCatalog(args []string, stdout io.Writer) error {
 		if len(cfg.Catalog.Models) == 0 {
 			fmt.Fprintln(stdout, "warning: catalog.models is empty, so the output repeats the native catalog only")
 		}
-		data, destination, err := catalog.Generate(cfg, *out)
+		var nativeData []byte
+		if strings.TrimSpace(cfg.Catalog.NativeCatalogFile) == "" {
+			nativeData, err = exportNativeCatalog(*codexBinary)
+			if err != nil {
+				return err
+			}
+		}
+		data, destination, err := catalog.GenerateWithNativeData(cfg, *out, nativeData)
 		if err != nil {
 			return err
 		}
@@ -493,6 +513,44 @@ func cmdCatalog(args []string, stdout io.Writer) error {
 	default:
 		return fmt.Errorf("%w: unknown catalog subcommand %q", errUsage, subcommand)
 	}
+}
+
+// exportNativeCatalog runs Codex with a fresh CODEX_HOME so catalog generation
+// never reads a user's Codex configuration or authentication state. The export
+// is kept in memory and is never written into the router configuration.
+func exportNativeCatalog(binary string) ([]byte, error) {
+	binary = strings.TrimSpace(binary)
+	if binary == "" {
+		return nil, fmt.Errorf("%w: --codex must name an executable", errUsage)
+	}
+	home, err := os.MkdirTemp("", "codex-model-router-codex-home-")
+	if err != nil {
+		return nil, err
+	}
+	defer os.RemoveAll(home)
+
+	command := exec.Command(binary, "debug", "models", "--bundled")
+	command.Env = replaceEnv(os.Environ(), "CODEX_HOME", home)
+	data, err := command.Output()
+	if err != nil {
+		var exited *exec.ExitError
+		if errors.As(err, &exited) && len(exited.Stderr) > 0 {
+			return nil, fmt.Errorf("export bundled Codex models: %w: %s", err, strings.TrimSpace(string(exited.Stderr)))
+		}
+		return nil, fmt.Errorf("export bundled Codex models: %w", err)
+	}
+	return data, nil
+}
+
+func replaceEnv(environment []string, key, value string) []string {
+	prefix := key + "="
+	filtered := make([]string, 0, len(environment)+1)
+	for _, item := range environment {
+		if !strings.HasPrefix(item, prefix) {
+			filtered = append(filtered, item)
+		}
+	}
+	return append(filtered, prefix+value)
 }
 
 func emitBytes(stdout io.Writer, data []byte, out string) error {
@@ -525,7 +583,7 @@ func cmdService(args []string, stdout io.Writer) error {
 	var options service.Options
 	options.Platform = runtime.GOOS
 	flags.StringVar(&options.Label, "label", service.DefaultLabel, "service label")
-	flags.StringVar(&options.BinaryPath, "bin", "", "router binary the agent runs (default: $CODEX_MODEL_ROUTER_BIN or ~/.local/lib/codex-model-router/codex-model-router)")
+	flags.StringVar(&options.BinaryPath, "bin", "", "router binary the agent runs (default: $CODEX_MODEL_ROUTER_BIN or ~/.local/bin/codex-model-router)")
 	flags.StringVar(&options.UnitDir, "unit-dir", "", "systemd user unit directory (default: $XDG_CONFIG_HOME/systemd/user or ~/.config/systemd/user)")
 	flags.StringVar(&options.PlistDir, "plist-dir", "", "LaunchAgents directory (default: ~/Library/LaunchAgents)")
 	flags.StringVar(&options.LogDir, "log-dir", "", "directory for the router's log files (default: ~/Library/Logs/<label>)")
@@ -560,20 +618,8 @@ func cmdService(args []string, stdout io.Writer) error {
 			options.BinaryPath = defaultBinary
 		}
 	}
-	if options.Platform == "darwin" && options.UnitDir != "" {
-		return fmt.Errorf("%w: --unit-dir applies only to Linux", errUsage)
-	}
-	if options.Platform == "darwin" && options.PlistDir == "" {
-		options.PlistDir, err = service.DefaultPlistDir()
-		if err != nil {
-			return err
-		}
-	}
-	if options.Platform == "darwin" && options.LogDir == "" {
-		options.LogDir, err = service.DefaultLogDir(options.Label)
-		if err != nil {
-			return err
-		}
+	if err := completeServiceOptions(&options); err != nil {
+		return err
 	}
 	if *shutdownTimeout != "" {
 		if _, err := time.ParseDuration(*shutdownTimeout); err != nil {
@@ -585,19 +631,13 @@ func cmdService(args []string, stdout io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("%w: %v", errUsage, err)
 	}
+	env, err = effectiveServiceEnvironment(cfg, env)
+	if err != nil {
+		return fmt.Errorf("%w: %v", errUsage, err)
+	}
 	options.Env = env
 
-	host := cfg.Listen.Host
-	if host == "localhost" {
-		host = "127.0.0.1"
-	}
-	manager := &service.Manager{
-		Options: options,
-		Runner:  service.ExecRunner{},
-		HealthProbe: func(ctx context.Context) (map[string]any, error) {
-			return serve.Health(ctx, host, cfg.Listen.Port, routing.HealthPath)
-		},
-	}
+	manager := newServiceManager(cfg, options)
 
 	switch subcommand {
 	case "preview":
@@ -637,6 +677,317 @@ func cmdService(args []string, stdout io.Writer) error {
 	}
 }
 
+func completeServiceOptions(options *service.Options) error {
+	if options.Platform == "darwin" && options.UnitDir != "" {
+		return fmt.Errorf("%w: --unit-dir applies only to Linux", errUsage)
+	}
+	if options.Platform == "darwin" && options.PlistDir == "" {
+		path, err := service.DefaultPlistDir()
+		if err != nil {
+			return err
+		}
+		options.PlistDir = path
+	}
+	if options.Platform == "darwin" && options.LogDir == "" {
+		path, err := service.DefaultLogDir(options.Label)
+		if err != nil {
+			return err
+		}
+		options.LogDir = path
+	}
+	return nil
+}
+
+func newServiceManager(cfg *config.Config, options service.Options) *service.Manager {
+	host := cfg.Listen.Host
+	if host == "localhost" {
+		host = "127.0.0.1"
+	}
+	return &service.Manager{
+		Options: options,
+		Runner:  service.ExecRunner{},
+		HealthProbe: func(ctx context.Context) (map[string]any, error) {
+			return serve.Health(ctx, host, cfg.Listen.Port, routing.HealthPath)
+		},
+	}
+}
+
+type setupService interface {
+	Preview() (string, service.Resolved, error)
+	Install(context.Context, bool, bool) (service.Report, error)
+}
+
+var (
+	setupServiceFactory = func(cfg *config.Config, options service.Options) setupService {
+		return newServiceManager(cfg, options)
+	}
+	setupHealthWaiter = waitForHealth
+)
+
+// cmdSetup performs the safe setup order: configuration and catalog failures
+// happen before the existing service is restarted. It never installs or copies
+// a binary; package-managed callers can retain their executable with --bin.
+func cmdSetup(args []string, stdout io.Writer) error {
+	flags := flag.NewFlagSet("setup", flag.ContinueOnError)
+	configPath := registerConfigFlag(flags)
+	binary := flags.String("bin", "", "router binary for the service (default: this executable)")
+	codexBinary := flags.String("codex", "codex", "Codex executable used for bundled native catalog export")
+	dryRun := flags.Bool("dry-run", false, "report the setup plan without writes, subprocesses, or service changes")
+	force := flags.Bool("force", false, "replace an existing service definition managed by another tool")
+	configureCodex := flags.Bool("configure-codex", false, "configure Codex root openai_base_url and model_catalog_json after a healthy service starts")
+	var environment stringList
+	flags.Var(&environment, "env", "service environment KEY=VALUE; repeat for each required route credential")
+	if err := parseFlags(flags, args); err != nil {
+		return err
+	}
+	if flags.NArg() > 0 {
+		return fmt.Errorf("%w: setup takes no positional arguments", errUsage)
+	}
+
+	path, err := resolvedConfigPath(*configPath)
+	if err != nil {
+		return err
+	}
+	cfg, exists, err := setupConfig(path)
+	if err != nil {
+		return err
+	}
+	serviceBinary, err := setupBinary(*binary)
+	if err != nil {
+		return err
+	}
+	env, err := parseEnvironment(environment)
+	if err != nil {
+		return fmt.Errorf("%w: %v", errUsage, err)
+	}
+	if cfg != nil {
+		if err := validateSetupEnvironment(cfg, env); err != nil {
+			return fmt.Errorf("%w: %v", errUsage, err)
+		}
+		env, err = effectiveServiceEnvironment(cfg, env)
+		if err != nil {
+			return fmt.Errorf("%w: %v", errUsage, err)
+		}
+	}
+	options := service.Options{Platform: runtime.GOOS, BinaryPath: serviceBinary, ConfigPath: path, Label: service.DefaultLabel, Env: env}
+	if err := completeServiceOptions(&options); err != nil {
+		return err
+	}
+
+	if *dryRun {
+		if *configureCodex {
+			codexPath, err := codexconfig.DefaultPath()
+			if err != nil {
+				return err
+			}
+			if _, err := codexconfig.Prepare(codexPath, cfg.BaseURL(), cfg.Catalog.OutputFile); err != nil {
+				return err
+			}
+			fmt.Fprintf(stdout, "would configure Codex at %s after health succeeds\n", codexPath)
+		}
+		if exists {
+			fmt.Fprintf(stdout, "would preserve router configuration %s\n", path)
+		} else {
+			fmt.Fprintf(stdout, "would create native-only router configuration %s\n", path)
+		}
+		fmt.Fprintf(stdout, "would export bundled native models with %s, atomically write %s, validate, and install the service using %s\n", *codexBinary, cfg.Catalog.OutputFile, serviceBinary)
+		if _, _, err := setupServiceFactory(cfg, options).Preview(); err != nil {
+			return err
+		}
+		fmt.Fprintln(stdout, "dry run: no files, subprocesses, or service state were changed")
+		return nil
+	}
+
+	if !exists {
+		if err := initializeConfig(path); err != nil {
+			return err
+		}
+		cfg, err = config.Load(path)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(stdout, "created native-only router configuration %s\n", path)
+	} else {
+		fmt.Fprintf(stdout, "preserved router configuration %s\n", path)
+	}
+
+	if err := generateCatalog(cfg, *codexBinary, stdout); err != nil {
+		return err
+	}
+	if cfg, err = config.Load(path); err != nil {
+		return err
+	}
+	if err := cfg.LoadRuntimeCatalog(); err != nil {
+		return err
+	}
+	if cfg.Listen.Port == 0 {
+		return fmt.Errorf("setup requires a fixed listen.port; port 0 cannot be used for service health checks")
+	}
+	var codexPlan *codexconfig.Plan
+	if *configureCodex {
+		codexPath, err := codexconfig.DefaultPath()
+		if err != nil {
+			return err
+		}
+		plan, err := codexconfig.Prepare(codexPath, cfg.BaseURL(), cfg.Catalog.OutputFile)
+		if err != nil {
+			return err
+		}
+		codexPlan = &plan
+	}
+
+	manager := setupServiceFactory(cfg, options)
+	report, installErr := manager.Install(context.Background(), false, *force)
+	fmt.Fprint(stdout, report.Describe())
+	if installErr != nil {
+		return installErr
+	}
+	health, err := setupHealthWaiter(cfg, 5*time.Second)
+	if err != nil {
+		return fmt.Errorf("service installed but the router did not become healthy: %w", err)
+	}
+	fmt.Fprintf(stdout, "healthy: %s\n", jsonCompact(health))
+
+	if codexPlan != nil {
+		if err := codexPlan.Apply(); err != nil {
+			return err
+		}
+		if codexPlan.Changed {
+			if codexPlan.OriginalExists {
+				fmt.Fprintf(stdout, "configured Codex at %s (exact backup: %s)\n", codexPlan.Path, codexPlan.Backup)
+			} else {
+				fmt.Fprintf(stdout, "configured Codex at %s\n", codexPlan.Path)
+			}
+		}
+	}
+	return nil
+}
+
+func resolvedConfigPath(explicit string) (string, error) {
+	if explicit == "" {
+		return defaultConfigPath()
+	}
+	return filepath.Abs(explicit)
+}
+
+func setupConfig(path string) (*config.Config, bool, error) {
+	cfg, err := config.Load(path)
+	if err == nil {
+		return cfg, true, nil
+	}
+	if !errors.Is(err, os.ErrNotExist) {
+		return nil, false, err
+	}
+	example, err := config.Example()
+	if err != nil {
+		return nil, false, err
+	}
+	cfg, err = config.Parse(example)
+	return cfg, false, err
+}
+
+// effectiveServiceEnvironment keeps a service on the data home used to derive
+// an empty catalog.output_file. An explicit service override may only repeat
+// that absolute value; accepting a different one would make setup generate and
+// serve from different catalogs.
+func effectiveServiceEnvironment(cfg *config.Config, environment map[string]string) (map[string]string, error) {
+	dataHome, usesDefaultCatalogPath := cfg.DefaultCatalogDataHome()
+	if !usesDefaultCatalogPath {
+		return environment, nil
+	}
+	if configured, ok := environment["XDG_DATA_HOME"]; ok {
+		configured = strings.TrimSpace(configured)
+		if !filepath.IsAbs(configured) {
+			return nil, fmt.Errorf("--env XDG_DATA_HOME must be absolute and match %s", dataHome)
+		}
+		if filepath.Clean(configured) != filepath.Clean(dataHome) {
+			return nil, fmt.Errorf("--env XDG_DATA_HOME=%s conflicts with the catalog data home %s", configured, dataHome)
+		}
+	}
+	if environment == nil {
+		environment = make(map[string]string, 1)
+	}
+	environment["XDG_DATA_HOME"] = dataHome
+	return environment, nil
+}
+
+func initializeConfig(path string) error {
+	example, err := config.Example()
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return fmt.Errorf("initialize router configuration %s: %w", path, err)
+	}
+	if _, err := file.Write(example); err != nil {
+		_ = file.Close()
+		return err
+	}
+	if err := file.Sync(); err != nil {
+		_ = file.Close()
+		return err
+	}
+	return file.Close()
+}
+
+func setupBinary(requested string) (string, error) {
+	if strings.TrimSpace(requested) != "" {
+		return filepath.Abs(requested)
+	}
+	path, err := os.Executable()
+	if err != nil {
+		return "", fmt.Errorf("resolve current executable; pass --bin: %w", err)
+	}
+	return filepath.Abs(path)
+}
+
+func generateCatalog(cfg *config.Config, codexBinary string, stdout io.Writer) error {
+	var nativeData []byte
+	var err error
+	if strings.TrimSpace(cfg.Catalog.NativeCatalogFile) == "" {
+		nativeData, err = exportNativeCatalog(codexBinary)
+		if err != nil {
+			return err
+		}
+	}
+	data, destination, err := catalog.GenerateWithNativeData(cfg, "", nativeData)
+	if err != nil {
+		return err
+	}
+	entries, err := catalog.CountModels(data)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(stdout, "wrote %s (%d model entries)\n", destination, entries)
+	return nil
+}
+
+func waitForHealth(cfg *config.Config, timeout time.Duration) (map[string]any, error) {
+	host := cfg.Listen.Host
+	if host == "localhost" {
+		host = "127.0.0.1"
+	}
+	deadline := time.Now().Add(timeout)
+	var last error
+	for {
+		ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+		health, err := serve.Health(ctx, host, cfg.Listen.Port, routing.HealthPath)
+		cancel()
+		if err == nil {
+			return health, nil
+		}
+		last = err
+		if time.Now().After(deadline) {
+			return nil, last
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+
 // stringList collects a repeatable flag.
 type stringList []string
 
@@ -661,6 +1012,32 @@ func parseEnvironment(pairs []string) (map[string]string, error) {
 		environment[name] = value
 	}
 	return environment, nil
+}
+
+// validateSetupEnvironment makes every configured remote route usable by the
+// service that setup is about to install. A native fallback is required only
+// when preserve_client_auth is disabled; otherwise Codex's own credential is
+// forwarded and native.api_key_env remains optional.
+func validateSetupEnvironment(cfg *config.Config, environment map[string]string) error {
+	for _, route := range cfg.Routes {
+		if route.Auth == nil {
+			continue
+		}
+		name := route.Auth.APIKeyEnv
+		if strings.TrimSpace(environment[name]) == "" {
+			return fmt.Errorf("route %q requires --env %s=VALUE", route.Name, name)
+		}
+	}
+	if !cfg.PreserveClientAuth() {
+		name := cfg.Native.APIKeyEnv
+		if name == "" {
+			return errors.New("native.preserve_client_auth=false requires native.api_key_env")
+		}
+		if strings.TrimSpace(environment[name]) == "" {
+			return fmt.Errorf("native requests require --env %s=VALUE when preserve_client_auth=false", name)
+		}
+	}
+	return nil
 }
 
 // cmdHealthCheck probes a running router and exits non-zero when it is unhealthy.

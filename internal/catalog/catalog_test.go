@@ -418,7 +418,8 @@ func TestGenerateWritesAtomicallyAndReportsDestination(t *testing.T) {
 	}
 }
 
-func TestGenerateWithoutAnOutputPathReturnsBytesOnly(t *testing.T) {
+func TestGenerateWithoutAnOutputPathUsesTheXDGDataPath(t *testing.T) {
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
 	cfg := mustParse(t, `{
 	  "listen": {"host": "127.0.0.1", "port": 0},
 	  "native": {"chatgpt_base_url": "https://native.invalid/b", "api_base_url": "https://api.invalid/v1", "models": ["gpt-5"]},
@@ -429,8 +430,8 @@ func TestGenerateWithoutAnOutputPathReturnsBytesOnly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if destination != "" {
-		t.Fatalf("destination = %q, want none", destination)
+	if destination == "" {
+		t.Fatal("destination should default to the XDG data directory")
 	}
 	if len(data) == 0 {
 		t.Fatal("no catalog bytes returned")

@@ -1,42 +1,46 @@
 # Codex setup
 
-The router generates model catalogs and forwards requests. Edit the active Codex
-configuration yourself or through your agent; the program does not edit TOML,
-create configuration backups, or restore them.
+The router generates model catalogs and forwards requests. `setup
+--configure-codex` can make its two required root-TOML edits after it has started
+a healthy service. It is opt-in; without that flag, the program does not edit
+Codex TOML.
 
 ## Configure
 
-1. Generate `~/.local/lib/codex-model-router/catalog.json` using the setup steps
-   in the README. Keep it beside the installed binary and `config.json`.
-2. Start the router and verify it with `codex-model-router healthcheck`.
-3. Locate the active Codex configuration, normally `~/.codex/config.toml` or the
-   configuration in your custom `CODEX_HOME`. Back it up before editing.
-4. Set these keys at the root, before any TOML table headers:
+1. Run `codex-model-router setup --configure-codex`.
+2. The final catalog defaults to
+   `$XDG_DATA_HOME/codex-model-router/catalog.json`, or
+   `~/.local/share/codex-model-router/catalog.json`.
+3. The active Codex configuration is `$CODEX_HOME/config.toml` when `CODEX_HOME`
+   is absolute, otherwise `~/.codex/config.toml`.
+4. Setup preserves existing TOML except these root keys:
 
 ```toml
 openai_base_url = "http://127.0.0.1:4317/v1"
-model_catalog_json = "/absolute/home/.local/lib/codex-model-router/catalog.json"
+model_catalog_json = "/absolute/path/to/codex-model-router/catalog.json"
 ```
 
-Use the router's actual loopback address, fixed port, and base path. Use an
-absolute catalog path, replacing `/absolute/home` with your home directory.
-For this native-authentication setup, remove any root
-custom `model_provider` override; preserve unrelated settings and review the diff.
-Do not modify authentication files. Restart Codex to reload the catalog and select
-the desired model. Keep the router running for native models as well.
+Use the router's actual loopback address, fixed port, base path, and an absolute
+catalog path. Setup creates `config.toml.codex-model-router.bak` with the exact
+pre-change bytes before its first update, and preserves that backup on later
+updates. It refuses a root `model_provider` override, including dotted/table
+forms, until you explicitly remove or migrate it; this prevents silent routing
+around `openai_base_url`. It does not modify authentication files. Restart Codex
+to reload the catalog and select the desired model.
 
 You can check catalog acceptance before editing:
 
 ```sh
-codex -c "model_catalog_json=\"$HOME/.local/lib/codex-model-router/catalog.json\"" debug models
+catalog_data_home=${XDG_DATA_HOME:-"$HOME/.local/share"}; case "$catalog_data_home" in /*) ;; *) catalog_data_home="$HOME/.local/share" ;; esac
+codex -c "model_catalog_json=\"$catalog_data_home/codex-model-router/catalog.json\"" debug models
 ```
 
 ## Rollback
 
-Restore the previous values of `openai_base_url`, `model_catalog_json`, and any
-`model_provider` changed during setup, or remove keys that setup added. Preserve
-later unrelated edits rather than blindly replacing the whole file with a backup.
-Restart Codex before stopping or uninstalling the router.
+Restore the two changed values or remove keys that setup added. The exact backup
+is available for reference, but preserve later unrelated edits rather than
+blindly replacing the whole file with it. Restart Codex before stopping or
+uninstalling the router.
 
 ## Troubleshooting and verification
 

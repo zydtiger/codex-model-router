@@ -18,6 +18,20 @@ func linuxOptions(t *testing.T) Options {
 	return o
 }
 
+func TestDefaultUnitDirIgnoresRelativeXDGConfigHome(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", "relative-config")
+	path, err := DefaultUnitDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join(home, ".config", "systemd", "user")
+	if path != want {
+		t.Fatalf("unit path = %q, want %q", path, want)
+	}
+}
+
 func TestSystemdRenderEscapesLiteralPathsAndEnvironment(t *testing.T) {
 	o := linuxOptions(t)
 	o.BinaryPath = "/tmp/space %n $HOME/route\"r"

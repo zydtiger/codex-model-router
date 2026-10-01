@@ -16,62 +16,12 @@
     "api_key_env": "",
     "models": []
   },
-  "routes": [
-    {
-      "name": "lab-qwen3-32b",
-      "base_url": "http://127.0.0.1:30000/v1",
-      "models": ["qwen3-32b"],
-      "auth": {
-        "api_key_env": "LAB_QWEN3_API_KEY",
-        "header": "Authorization",
-        "scheme": "bearer"
-      },
-      "reasoning": {
-        "adapter": "reasoning_to_chat_template",
-        "supported_efforts": ["none", "low", "medium", "high"],
-        "unknown_effort": "drop",
-        "forward_reasoning": false,
-        "chat_template_kwargs": {
-          "enable_thinking": { "none": false, "low": true, "medium": true, "high": true },
-          "reasoning_effort": { "low": "low", "medium": "medium", "high": "high" },
-          "preserve_thinking": true
-        }
-      },
-      "input": {
-        "reasoning_items": "drop",
-        "compaction_items": "drop",
-        "custom_tools": "map_to_function_calls",
-        "developer_role_as_system": true,
-        "unknown_items": "drop"
-      },
-      "tools": {
-        "namespace_adapter": "namespace_to_functions",
-        "custom_adapter": "custom_to_functions",
-        "schema_loading": "on_demand"
-      },
-      "response_header_timeout_seconds": 0
-    },
-    {
-      "name": "lab-deepseek-r1",
-      "base_url": "http://127.0.0.1:8000/v1",
-      "models": ["deepseek-r1-distill"]
-    }
-  ],
+  "routes": [],
   "catalog": {
     "native_catalog_file": "",
-    "output_file": "catalog.json",
+    "output_file": "",
     "base_instructions_file": "",
-    "description": "Self-hosted model",
-    "models": [
-      {
-        "id": "qwen3-32b",
-        "route": "lab-qwen3-32b",
-        "display_name": "Qwen3 32B (local)",
-        "context_window": 131072,
-        "input_modalities": ["text"],
-        "default_reasoning_level": "medium",
-        "tool_capable": true
-      }
-    ]
+    "description": "",
+    "models": []
   }
 }

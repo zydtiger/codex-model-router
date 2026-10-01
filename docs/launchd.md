@@ -12,30 +12,30 @@ The default installation uses your home directory and does not require `sudo`. `
 | ----------------------------- | ------------------------------------------------------------------ |
 | LaunchAgent plist             | `~/Library/LaunchAgents/com.github.zydtiger.codex-model-router.plist` |
 | Router logs                   | `~/Library/Logs/com.github.zydtiger.codex-model-router/`           |
-| Binary the agent runs         | `~/.local/lib/codex-model-router/codex-model-router`               |
-| Router configuration          | `~/.local/lib/codex-model-router/config.json`                      |
-| Generated model catalog       | `~/.local/lib/codex-model-router/catalog.json`                     |
+| Manual-install binary         | `~/.local/bin/codex-model-router`                                  |
+| Router configuration          | `$XDG_CONFIG_HOME/codex-model-router/config.json` or `~/.config/...` |
+| Generated model catalog       | `$XDG_DATA_HOME/codex-model-router/catalog.json` or `~/.local/share/...` |
 | Label                         | `com.github.zydtiger.codex-model-router`                           |
 | launchd domain                | `gui/<uid>` of the current user                                    |
 
 The binary path is deliberately outside any checkout: upgrading or deleting a
 clone must not break a running agent. `service install` does **not** copy the
-executable, so point `--bin` at a file you placed there yourself, or accept the
-default only after installing a build at that path. The key names come from your
-router configuration (`routes[].auth.api_key_env`, `native.api_key_env`) and are
-passed with `--env`; nothing is hardcoded here.
+executable. Use `--bin` for a package-managed path; `setup` uses the executable
+it was invoked through. The key names come from your router configuration
+(`routes[].auth.api_key_env`, `native.api_key_env`) and are passed with `--env`;
+nothing is hardcoded here.
 
 `service status` names the log files and probes the router's health endpoint.
 
 ## Install
 
-Follow [setup](../README.md#setup) to install the binary, edit `config.json`,
-and generate `catalog.json` in the installation directory. The CLI defaults to
-that `config.json`; `catalog.output_file` is `catalog.json`.
+Follow [setup](../README.md#setup) to initialize the XDG configuration and
+catalog. The CLI uses the XDG configuration default; use `--config` for a
+preserved legacy or custom location.
 
 ```sh
-~/.local/lib/codex-model-router/codex-model-router service preview
-~/.local/lib/codex-model-router/codex-model-router service install
+codex-model-router service preview
+codex-model-router service install
 ```
 
 Install runs `launchctl bootout gui/<uid>/<label>` first, to clear a previously

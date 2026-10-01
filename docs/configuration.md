@@ -10,12 +10,15 @@ In order of precedence:
 
 1. `--config <path>` on any subcommand.
 2. `$CODEX_MODEL_ROUTER_CONFIG`.
-3. `~/.local/lib/codex-model-router/config.json`.
+3. `$XDG_CONFIG_HOME/codex-model-router/config.json`, when `XDG_CONFIG_HOME`
+   is absolute.
+4. `~/.config/codex-model-router/config.json`.
 
-The installation directory contains the binary, `config.json`, and generated
-`catalog.json`. Set `catalog.output_file` to `catalog.json` so the output stays
-beside the configuration. See [setup](../README.md#setup) for installation and
-temporary native catalog inputs.
+The generated catalog defaults to
+`$XDG_DATA_HOME/codex-model-router/catalog.json` when `XDG_DATA_HOME` is
+absolute, otherwise `~/.local/share/codex-model-router/catalog.json`. Relative
+XDG values are ignored. An explicit relative `catalog.output_file` still
+resolves beside the selected configuration file. See [setup](../README.md#setup).
 
 `codex-model-router catalog print-example --out <path>` writes a documented
 starting point. `codex-model-router validate` checks a file without opening a
@@ -55,8 +58,8 @@ error messages:
     "models": []
   },
   "catalog": {
-    "native_catalog_file": "/absolute/temporary/directory/native.json",
-    "output_file": "catalog.json",
+    "native_catalog_file": "",
+    "output_file": "",
     "native_model_ids_from_catalog": true,
     "base_instructions_file": "",
     "description": "",
@@ -125,8 +128,9 @@ error messages:
 loopback. A LAN address is rejected at load time and again after `bind()`.
 
 A port of `0` chooses a random port; `healthcheck` then needs `--port`.
-Use a fixed port for a service and for the URL configured in Codex. The router
-does not validate or edit Codex's TOML file; see [Codex setup](codex-desktop.md).
+Use a fixed port for a service and for the URL configured in Codex. `setup
+--configure-codex` validates and narrowly edits Codex's TOML file only after a
+healthy service starts; see [Codex setup](codex-desktop.md).
 
 ## `base_path`
 
@@ -443,15 +447,17 @@ choice when silent loss is worse than a visible failure.
 
 | Key                               | Default | Meaning                                                     |
 | --------------------------------- | ------- | ------------------------------------------------------------ |
-| `catalog.native_catalog_file`     | `""`    | `codex debug models --bundled` output to merge with           |
-| `catalog.output_file`             | `""`    | Where `catalog generate` writes                               |
+| `catalog.native_catalog_file`     | `""`    | Explicit raw `codex debug models --bundled` input for offline generation |
+| `catalog.output_file`             | XDG data catalog path | Where `catalog generate` writes                    |
 | `catalog.native_model_ids_from_catalog` | `true` | Import non-remote slugs from the combined output at startup          |
 | `catalog.base_instructions_file`  | `""`    | File used for `base_instructions`                             |
 
-The installed configuration and printed example set `catalog.output_file` to
-`"catalog.json"`. `catalog generate --out <path>` overrides the configured output.
-If both the flag and the configuration value are empty, generation writes JSON
-to stdout; it does not choose another filename.
+The printed native-only example leaves `catalog.output_file` empty to select the
+XDG data default. `catalog generate --out <path>` overrides the configured
+output. When `native_catalog_file` is empty, generation exports native models
+with `codex debug models --bundled` through a fresh temporary `CODEX_HOME`; use
+`--codex /path/to/codex` for a particular CLI build. The raw-file input remains
+available for offline use and bypasses that export.
 
 `base_instructions` is not optional in practice. Codex requires `base_instructions` or
 `model_messages.instructions` on every entry, and the Codex model cache carries neither
@@ -481,15 +487,15 @@ native model.
 
 - The router reads only the file it is pointed at. It never writes to its own
   configuration. `catalog print-example` writes a new example; catalog generation,
-  and service install/uninstall also write their target files.
+  setup, and service install/uninstall write their documented target files.
 - Configuration carries environment variable *names*, never secret values. The
   values come from the process environment, which under launchd means the plist
   (see [launchd](launchd.md)).
 - `catalog.native_catalog_file`, `catalog.output_file`,
   and `catalog.base_instructions_file` paths are expanded
   (`~`) and resolved relative to the configuration file's directory, and
-  `codex-model-router validate` prints them absolute. Use `catalog.json` in the
-  router configuration and its resolved absolute installation path for Codex's
+  `codex-model-router validate` prints them absolute. Leave output empty for the
+  XDG final catalog, or use an explicit resolved absolute path for Codex's
   `model_catalog_json` setting.
 
 ## After editing
@@ -505,11 +511,15 @@ codex-model-router validate
 
 ## Migration and rollback
 
-There is no stored state to migrate: the config is read at start-up and
-`catalog generate` overwrites `output_file` atomically, keeping the old bytes
-until the new file is fully written. `service install` overwrites the plist only
-if the existing file was written by this tool, otherwise it refuses without
-`--force`.
+Older installations may have
+`~/.local/lib/codex-model-router/config.json`. They are not imported, rewritten,
+or deleted automatically. Continue to use one with `--config` and preserve its
+custom `catalog.output_file`; to migrate, make an explicit backup, copy the
+configuration, set `catalog.output_file` to `""`, generate a new catalog, and
+only then update Codex. `catalog generate` overwrites its final output
+atomically, keeping old bytes until the new catalog is complete. `service install`
+overwrites a service definition only when it was written by this tool, otherwise
+it refuses without `--force`.
 
 Undo the Codex configuration changes manually or through your agent, preserving
 unrelated edits, and restart Codex before stopping the router. Then use

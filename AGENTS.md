@@ -14,16 +14,19 @@ are introduced. Read `README.md` before changing behavior.
 
 ## Installation layout
 
-Use a self-contained per-user installation in `~/.local/lib/codex-model-router/`:
-`codex-model-router`, `config.json`, and generated `catalog.json`.
-Edit the installed configuration directly and preserve it during binary upgrades.
-Runtime paths in the service definition and Codex configuration must reference
-this installation, never a source checkout. The CLI defaults to the installed
-`config.json`; set `catalog.output_file` to `catalog.json` so it resolves beside
-the configuration. Use `--config` for an explicit alternate configuration.
-Keep native catalog generation inputs temporary; they are not runtime dependencies.
-Keep service definitions and logs in the platform's service/log locations, outside
-the installation directory. Do not put personal deployment files in Git.
+The default router configuration is
+`$XDG_CONFIG_HOME/codex-model-router/config.json`, or
+`~/.config/codex-model-router/config.json`; only absolute XDG values apply. The
+generated catalog defaults to `$XDG_DATA_HOME/codex-model-router/catalog.json`,
+or `~/.local/share/codex-model-router/catalog.json`. Preserve explicit
+`--config` and `catalog.output_file` locations.
+
+For manual installation, use `~/.local/bin/codex-model-router`. A package
+manager keeps its own executable path; `setup` uses its current executable by
+default and `service install --bin` selects an explicit one. Never copy a
+package-managed binary. Keep native catalog generation inputs temporary; they
+are not runtime dependencies. Keep service definitions and logs in the
+platform's service/log locations. Do not put personal deployment files in Git.
 
 ## Toolchain and validation
 
@@ -59,5 +62,14 @@ commit, push, merge, or release; follow the user's explicit scope for each.
 
 The repository is public on GitHub. Keep its instructions and development
 workflow self-contained. Never include personal infrastructure in examples.
-No release contract or automatic release is established yet; confirm the
-license, versioning, and release approval before distributing artifacts.
+
+Releases use SemVer `vX.Y.Z` tags. Before `1.0.0`, breaking public CLI, config,
+catalog, or service behavior increments the minor version; compatible changes
+increment the patch version. Git tags are the Go binary version source: release
+packaging passes the exact tag with `-ldflags`, while development builds report
+`dev`. [CHANGELOG.md](CHANGELOG.md) is the sole version history; copy its
+released section into GitHub release notes. From clean, synchronized `main`,
+create an annotated tag only with explicit release approval, then run
+`scripts/package-release.sh` to produce darwin/arm64 and linux/amd64 archives
+and checksums. Published `v*` tags are immutable; do not move, replace, or
+delete them. The project is distributed under the MIT License in `LICENSE`.

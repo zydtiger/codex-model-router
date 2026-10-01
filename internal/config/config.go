@@ -91,6 +91,13 @@ type Config struct {
 	// empty for bytes that were not read from a file, and relative catalog paths are
 	// resolved against it.
 	baseDir string
+	// catalogOutputFileExplicit distinguishes a user-selected catalog from the
+	// default final catalog path. A missing default catalog must not make an
+	// existing routes-only configuration fail at startup.
+	catalogOutputFileExplicit bool
+	// catalogOutputUsesDefaultPath records that the input left output_file blank,
+	// so callers that launch a service can preserve the selected XDG data home.
+	catalogOutputUsesDefaultPath bool
 
 	// routeByModel maps an exact model ID to its remote route. It is built by
 	// Validate and is the only routing lookup the handler performs.
@@ -315,6 +322,8 @@ func parseInDirectory(data []byte, directory string) (*Config, error) {
 		return nil, fmt.Errorf("%w: decode config: %w", ErrInvalid, err)
 	}
 	cfg.baseDir = directory
+	cfg.catalogOutputFileExplicit = catalogOutputFileExplicit(data)
+	cfg.catalogOutputUsesDefaultPath = strings.TrimSpace(cfg.Catalog.OutputFile) == ""
 	cfg.applyDefaults()
 	if err := cfg.Validate(); err != nil {
 		return nil, err
@@ -329,6 +338,52 @@ func (c *Config) applyDefaults() {
 	if c.MaxRequestBytes == 0 {
 		c.MaxRequestBytes = DefaultMaxRequestByte
 	}
+	if strings.TrimSpace(c.Catalog.OutputFile) == "" {
+		if path, err := DefaultCatalogPath(); err == nil {
+			c.Catalog.OutputFile = path
+		}
+	}
+}
+
+// catalogOutputFileExplicit reports whether the input has an explicit catalog
+// output_file key. It runs alongside the strict decode above, which remains
+// responsible for rejecting invalid JSON and unknown configuration fields.
+func catalogOutputFileExplicit(data []byte) bool {
+	var document map[string]json.RawMessage
+	if json.Unmarshal(data, &document) != nil {
+		return false
+	}
+	var catalog map[string]json.RawMessage
+	if raw, ok := document["catalog"]; !ok || json.Unmarshal(raw, &catalog) != nil {
+		return false
+	}
+	_, ok := catalog["output_file"]
+	return ok
+}
+
+// DefaultCatalogPath is the final location of the generated combined catalog.
+// XDG_DATA_HOME is honored only when it is absolute; a relative value is not a
+// usable cross-process location and falls back to the XDG default below home.
+func DefaultCatalogPath() (string, error) {
+	base := strings.TrimSpace(os.Getenv("XDG_DATA_HOME"))
+	if !filepath.IsAbs(base) {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", err
+		}
+		base = filepath.Join(home, ".local", "share")
+	}
+	return filepath.Join(base, "codex-model-router", "catalog.json"), nil
+}
+
+// DefaultCatalogDataHome returns the effective XDG data home selected for an
+// empty catalog.output_file. Service installers use it so the launched router
+// recomputes the same final catalog path as the generator.
+func (c *Config) DefaultCatalogDataHome() (string, bool) {
+	if !c.catalogOutputUsesDefaultPath || c.Catalog.OutputFile == "" {
+		return "", false
+	}
+	return filepath.Dir(filepath.Dir(c.Catalog.OutputFile)), true
 }
 
 func (c *Config) Validate() error {
@@ -383,7 +438,7 @@ func (c *Config) Validate() error {
 		add("%v", err)
 	}
 
-	if len(c.routeByModel) == 0 && len(c.nativeModels) == 0 && !(c.Catalog.OutputFile != "" && c.CatalogUsesNativeModelIDs()) {
+	if len(c.routeByModel) == 0 && len(c.nativeModels) == 0 && !(c.catalogOutputFileExplicit && c.Catalog.OutputFile != "" && c.CatalogUsesNativeModelIDs()) {
 		add("no models are configured: declare at least one route or native.model")
 	}
 	if len(problems) > 0 {
@@ -615,6 +670,9 @@ func (c *Config) LoadRuntimeCatalog() error {
 	}
 	ids, err := catalogSlugs(c.Catalog.OutputFile)
 	if err != nil {
+		if !c.catalogOutputFileExplicit && errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
 		return fmt.Errorf("catalog.output_file: %w; generate the combined catalog before starting the router", err)
 	}
 	for _, id := range ids {

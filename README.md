@@ -36,42 +36,103 @@ Use `--help` on each subcommand for its flags.
 
 ## Setup
 
-Keep the runtime files together in `~/.local/lib/codex-model-router/`:
-`codex-model-router`, `config.json`, and `catalog.json`. Install the build there;
-upgrades replace only the binary and preserve your configuration and catalog.
+The router configuration defaults to
+`$XDG_CONFIG_HOME/codex-model-router/config.json`, or
+`~/.config/codex-model-router/config.json`. Its final catalog defaults to
+`$XDG_DATA_HOME/codex-model-router/catalog.json`, or
+`~/.local/share/codex-model-router/catalog.json`. Relative XDG values are
+ignored so interactive and service invocations share stable paths.
+
+When `catalog.output_file` is empty, `setup` and `service install` pass the
+effective absolute `XDG_DATA_HOME` into the service definition. A service
+`--env XDG_DATA_HOME=...` value must name that same absolute directory; a
+different or relative value is rejected before installation.
+
+For a manual installation, build into your normal user `PATH`:
 
 ```sh
-router_dir="$HOME/.local/lib/codex-model-router"
-mkdir -p "$router_dir"
-cp bin/codex-model-router "$router_dir/codex-model-router.new"
-mv "$router_dir/codex-model-router.new" "$router_dir/codex-model-router"
-export PATH="$router_dir:$PATH"
+mkdir -p "$HOME/.local/bin"
+GOTOOLCHAIN=go1.27.1 go build -o "$HOME/.local/bin/codex-model-router" ./cmd/codex-model-router
 ```
 
-On first setup, create `config.json` if it does not already exist:
+A package manager keeps its own executable path. `setup` uses the executable
+that was invoked, while `service install --bin /path/to/codex-model-router`
+selects one explicitly.
+
+Run the first-time setup:
 
 ```sh
-test -e "$router_dir/config.json" ||
-  codex-model-router catalog print-example --out "$router_dir/config.json"
+codex-model-router setup --dry-run
+codex-model-router setup --configure-codex
 ```
 
-Export the native catalog to a temporary directory when generating or refreshing
-the combined catalog:
+`setup` creates a valid native-only configuration only when the target does not
+exist; it preserves an existing custom configuration. It exports bundled native
+models using a temporary isolated `CODEX_HOME`, atomically generates the final
+catalog, reloads and validates it, installs/restarts the user service, then
+waits for `/healthz`. It never downloads or copies a binary. `--dry-run` creates
+no files, runs no exporter or service command, and makes no configuration change.
+
+`--configure-codex` is the opt-in for editing Codex's root configuration
+(`$CODEX_HOME/config.toml`, or `~/.codex/config.toml`). It changes only
+`openai_base_url` and `model_catalog_json`, preserves unrelated TOML and
+comments where possible, and saves exact pre-change bytes once as
+`config.toml.codex-model-router.bak`. It refuses a root `model_provider`
+override rather than silently configuring a bypassed route. Restart Codex after
+success.
+
+To add a self-hosted route, edit the JSON configuration, then rerun setup with
+the required service credentials:
 
 ```sh
-native_dir="$(mktemp -d)"
-codex debug models --bundled > "$native_dir/native.json"
-printf '%s\n' "$native_dir/native.json"
+codex-model-router setup --env LAB_MODEL_API_KEY="$LAB_MODEL_API_KEY"
 ```
 
-Edit the installed `config.json` before proceeding:
+Repeat `--env` values on later `setup` or `service install` calls; the service
+definition is replaced with the values passed then. Its mode becomes `0600` when
+it carries environment values, but it is not a secret store.
+
+`catalog generate` remains available for a catalog-only refresh. With no
+`catalog.native_catalog_file`, it invokes `codex debug models --bundled` in the
+same isolation; `--codex /path/to/codex` selects a particular executable,
+including a Nix build. An explicit `catalog.native_catalog_file` preserves the
+offline raw-file workflow and bypasses the exporter. Generation never changes
+the binary, service, router configuration, or Codex TOML; a failure preserves
+the old catalog.
+
+## Legacy layout migration
+
+Earlier builds used `~/.local/lib/codex-model-router/` for the binary,
+configuration, and catalog. Detect that bounded legacy layout with:
+
+```sh
+test -e "$HOME/.local/lib/codex-model-router/config.json" &&
+  printf '%s\n' 'legacy codex-model-router configuration found'
+```
+
+Nothing migrates automatically. Keep a legacy configuration working with an
+explicit path, preserving its custom routes and relative catalog location:
+
+```sh
+codex-model-router setup --config "$HOME/.local/lib/codex-model-router/config.json" \
+  --bin /path/to/codex-model-router
+```
+
+To move deliberately, back up and copy the JSON, set `catalog.output_file` to
+`""`, generate a new catalog, then run `setup --configure-codex`. Do not delete
+legacy files until the new service and catalog have been checked.
+
+## Self-hosted route configuration
+
+Edit the router configuration before proceeding:
 
 - Set `routes[].base_url` and exact `routes[].models` IDs for your server.
 - Remove routes you do not use. If authentication is unnecessary, omit `auth`;
   otherwise set the environment variable named by `auth.api_key_env`.
-- Set `catalog.native_catalog_file` to the absolute temporary path printed above.
-  Keep `catalog.output_file` set to `catalog.json`, as in the example. Relative
-  catalog paths resolve from the configuration file's directory.
+- Leave `catalog.native_catalog_file` empty for the normal bundled export, or
+  set it to a raw catalog for offline generation. Leave `catalog.output_file`
+  empty for the XDG data default. Relative paths resolve from the configuration
+  file's directory.
 - Set each catalog model's `id` and `route` to the corresponding route. Set
   `display_name` to the label you want in the selector, independently of its ID.
   For example, `Qwen-3.8 Flash Next` can label
@@ -85,36 +146,18 @@ Edit the installed `config.json` before proceeding:
 ```sh
 codex-model-router validate
 codex-model-router catalog generate
-codex -c "model_catalog_json=\"$router_dir/catalog.json\"" debug models
+catalog_data_home=${XDG_DATA_HOME:-"$HOME/.local/share"}; case "$catalog_data_home" in /*) ;; *) catalog_data_home="$HOME/.local/share" ;; esac
+codex -c "model_catalog_json=\"$catalog_data_home/codex-model-router/catalog.json\"" debug models
 ```
 
-After successful generation, clear `catalog.native_catalog_file` to `""` in
-`config.json` and remove the temporary directory with `rm -r "$native_dir"`.
-The runtime reads the generated `catalog.json` instead of the native input.
-Repeat the export and generation steps when you want to refresh native models.
-
-The CLI defaults to the installed `config.json`, independent of the current
-directory. `--config` or `CODEX_MODEL_ROUTER_CONFIG` can select another file.
-Start the router in the foreground with `codex-model-router serve`, or use the
-platform service commands below.
-
-With the router running, edit the active Codex configuration yourself or ask your
-agent to do it. Back up the file and review the diff. Set these root keys:
-
-```toml
-openai_base_url = "http://127.0.0.1:4317/v1"
-model_catalog_json = "/absolute/home/.local/lib/codex-model-router/catalog.json"
-```
-
-Replace `/absolute/home` with your home directory and use the actual listener URL.
-For native authentication, remove a root custom `model_provider` override if
-present, preserving unrelated
-settings. The router does not edit Codex configuration or manage its backups.
-Restart Codex to reload the catalog. Keep the router running while Codex points
-at it, including for native models. See [Codex setup](docs/codex-desktop.md).
+The XDG default is independent of the current directory. Relative `--config`
+and `CODEX_MODEL_ROUTER_CONFIG` values are explicit overrides and resolve from
+the current directory. Start the router in the foreground with
+`codex-model-router serve`, or use the standalone service commands for custom
+service definitions. See [Codex setup](docs/codex-desktop.md).
 
 For login startup and crash recovery, use `service preview`, `service install`,
-`service status`, and `service uninstall` with the installed binary.
+`service status`, and `service uninstall` with the selected binary.
 See [launchd setup](docs/launchd.md) or [systemd setup](docs/systemd.md) for paths
 and environment handling.
 Service configuration belongs to this repository. No Docker container is required.
@@ -125,9 +168,9 @@ Configured remote model IDs go to their assigned upstream. Explicit native IDs,
 including non-remote IDs imported from the combined catalog, go to the native upstream.
 Unknown IDs are rejected without contacting either provider. Matching is exact.
 
-The native catalog is a generation input, not a startup dependency. Deploy the
-binary, `config.json`, and generated `catalog.json` in the installation directory.
-Export a fresh temporary native catalog from Codex when regenerating.
+The native catalog is a generation input, not a startup dependency. The router
+reads its generated final catalog from the configured path at startup. Refresh
+it with `catalog generate` or `setup` when Codex's bundled models change.
 When catalog ID import is enabled, generate `catalog.output_file` before starting
 the service. Missing or malformed combined catalogs stop startup.
 
@@ -177,9 +220,8 @@ to off, and log rotation is not provided.
 - [LaunchAgent lifecycle](docs/launchd.md)
 - [Systemd user service](docs/systemd.md)
 
-Keep personal runtime files in the installation directory, outside the checkout.
-Root-level `config.json` and `catalog.json`, build outputs, and logs are ignored
-by Git.
+Keep personal runtime files outside the checkout. Root-level `config.json` and
+`catalog.json`, build outputs, and logs are ignored by Git.
 
 ## Development
 
@@ -198,4 +240,24 @@ service-manager test.
 
 ## Releases
 
-License, versioning, and release approval have not been established.
+Releases use SemVer annotated tags (`vX.Y.Z`). Before `1.0.0`, breaking public
+CLI, configuration, catalog, or service behavior increments the minor version;
+compatible changes increment the patch version. [CHANGELOG.md](CHANGELOG.md) is
+the sole release-note source: copy the released section into the GitHub release.
+
+From clean, synchronized `main`, validate the exact release commit, create the
+approved annotated tag, then package the tagged source:
+
+```sh
+scripts/package-release.sh
+```
+
+The script derives the binary version from `HEAD`'s exact tag and creates
+darwin/arm64 and linux/amd64 archives plus `SHA256SUMS` in `dist/`. It refuses a
+dirty worktree, missing SemVer tag, or existing artifact. Publishing the tag and
+GitHub release remains a single explicit approval-gated action. Published `v*`
+tags are immutable.
+
+## License
+
+Distributed under the [MIT License](LICENSE).
