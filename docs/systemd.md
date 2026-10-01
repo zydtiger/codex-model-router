@@ -7,17 +7,16 @@ session. The installer does not enable lingering or alter system-wide services.
 
 ## Installation
 
-Install the binary and your configuration into `~/.local/lib/codex-model-router/`.
-Keep the generated catalog there as `catalog.json`, with `catalog.output_file`
-set to `catalog.json` in `config.json`. See [setup](../README.md#setup) to build
-and populate this directory. Preserve personal configuration when replacing
-the binary. The CLI defaults to this installed `config.json`.
+Install a manual binary at `~/.local/bin/codex-model-router`, or retain the
+package manager's own binary and pass it with `--bin`. The configuration defaults
+to `$XDG_CONFIG_HOME/codex-model-router/config.json` (or `~/.config/...`) and
+the catalog to `$XDG_DATA_HOME/codex-model-router/catalog.json` (or
+`~/.local/share/...`). See [setup](../README.md#setup). Preserve custom or legacy
+paths with `--config` and explicit `catalog.output_file` values.
 
 ```sh
-~/.local/lib/codex-model-router/codex-model-router service preview \
-  --config ~/.local/lib/codex-model-router/config.json
-~/.local/lib/codex-model-router/codex-model-router service install \
-  --config ~/.local/lib/codex-model-router/config.json
+codex-model-router service preview
+codex-model-router service install
 ```
 
 Units go in `$XDG_CONFIG_HOME/systemd/user/`, or `~/.config/systemd/user/`.
@@ -39,8 +38,7 @@ never changes that policy.
 
 ```sh
 journalctl --user -u com.github.zydtiger.codex-model-router.service
-~/.local/lib/codex-model-router/codex-model-router service status \
-  --config ~/.local/lib/codex-model-router/config.json
+codex-model-router service status
 ```
 
 Both stdout and stderr go to the journal; retention and rotation follow the
@@ -54,8 +52,7 @@ variables are not a secret store. Do not publish unit files containing credentia
 ## Uninstall
 
 ```sh
-~/.local/lib/codex-model-router/codex-model-router service uninstall \
-  --config ~/.local/lib/codex-model-router/config.json
+codex-model-router service uninstall
 ```
 
 Uninstall disables and stops the unit, removes its definition, and reloads the

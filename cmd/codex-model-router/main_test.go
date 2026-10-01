@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net"
 	"net/http"
@@ -29,16 +30,33 @@ import (
 // workspace is a temporary set of files the CLI can act on. Both native URLs point
 // at a mock server so no subcommand can reach a real account.
 type workspace struct {
-	dir        string
-	configPath string
-	catalog    string
-	upstream   string
-	calls      *callLog
+	dir           string
+	configPath    string
+	catalog       string
+	nativeCatalog string
+	upstream      string
+	calls         *callLog
 }
 
 type callLog struct {
 	mu    sync.Mutex
 	paths []string
+}
+
+type fakeSetupService struct {
+	installs int
+	previews int
+	options  service.Options
+}
+
+func (s *fakeSetupService) Preview() (string, service.Resolved, error) {
+	s.previews++
+	return "", service.Resolved{}, nil
+}
+
+func (s *fakeSetupService) Install(_ context.Context, _, _ bool) (service.Report, error) {
+	s.installs++
+	return service.Report{}, nil
 }
 
 func (c *callLog) record(path string) {
@@ -131,11 +149,83 @@ func newWorkspace(t *testing.T) *workspace {
 		t.Fatal(err)
 	}
 	return &workspace{
-		dir:        dir,
-		configPath: configPath,
-		catalog:    filepath.Join(dir, "catalog.json"),
-		upstream:   upstream.URL,
-		calls:      calls,
+		dir:           dir,
+		configPath:    configPath,
+		catalog:       filepath.Join(dir, "catalog.json"),
+		nativeCatalog: nativeCatalog,
+		upstream:      upstream.URL,
+		calls:         calls,
+	}
+}
+
+func configureRouteCredential(t *testing.T, work *workspace, name string) {
+	t.Helper()
+	data, err := os.ReadFile(work.configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	updated := strings.Replace(string(data),
+		`"models": ["qwen3-32b"],
+    "reasoning":`,
+		`"models": ["qwen3-32b"],
+    "auth": {"api_key_env": "`+name+`"},
+    "reasoning":`, 1)
+	if updated == string(data) {
+		t.Fatal("test fixture does not contain the route model list")
+	}
+	if err := os.WriteFile(work.configPath, []byte(updated), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func configureNativeFallback(t *testing.T, work *workspace, name string) {
+	t.Helper()
+	data, err := os.ReadFile(work.configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	updated := strings.Replace(string(data),
+		`"preserve_client_auth": true,`,
+		`"preserve_client_auth": true,
+    "api_key_env": "`+name+`",`, 1)
+	if updated == string(data) {
+		t.Fatal("test fixture does not contain preserve_client_auth")
+	}
+	if err := os.WriteFile(work.configPath, []byte(updated), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func configureNativeCredentialRequirement(t *testing.T, work *workspace, name string) {
+	t.Helper()
+	data, err := os.ReadFile(work.configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	updated := strings.Replace(string(data),
+		`"preserve_client_auth": true,`,
+		`"preserve_client_auth": false,
+    "api_key_env": "`+name+`",`, 1)
+	if updated == string(data) {
+		t.Fatal("test fixture does not contain preserve_client_auth")
+	}
+	if err := os.WriteFile(work.configPath, []byte(updated), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func configureDefaultCatalogPath(t *testing.T, work *workspace) {
+	t.Helper()
+	data, err := os.ReadFile(work.configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	updated := strings.Replace(string(data), `"output_file": "catalog.json"`, `"output_file": ""`, 1)
+	if updated == string(data) {
+		t.Fatal("test fixture does not contain catalog output_file")
+	}
+	if err := os.WriteFile(work.configPath, []byte(updated), 0o600); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -169,15 +259,41 @@ func TestVersionAndUsage(t *testing.T) {
 			t.Fatalf("%v exited %d, want %d", args, code, exitUsage)
 		}
 	}
+	for _, args := range [][]string{{"catalog", "generate", "-h"}, {"setup", "-h"}} {
+		if code, _, _ := runCLI(t, args...); code != exitOK {
+			t.Fatalf("%v exited %d, want help success", args, code)
+		}
+	}
 }
 
 func TestUsageListsEverySubcommand(t *testing.T) {
 	out := mustRun(t, exitOK, "help")
 	for _, name := range []string{"serve", "validate", "catalog generate", "catalog print-example",
-		"service preview", "service install", "service status", "service uninstall", "healthcheck", "version"} {
+		"setup", "service preview", "service install", "service status", "service uninstall", "healthcheck", "version"} {
 		if !strings.Contains(out, name) {
 			t.Fatalf("usage does not mention %q:\n%s", name, out)
 		}
+	}
+}
+
+func TestSetupUsesCurrentExecutableUnlessBinIsExplicit(t *testing.T) {
+	current, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := setupBinary("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved != current {
+		t.Fatalf("default setup binary = %q, want current executable %q", resolved, current)
+	}
+	explicit, err := setupBinary("relative-router")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !filepath.IsAbs(explicit) || filepath.Base(explicit) != "relative-router" {
+		t.Fatalf("explicit setup binary = %q", explicit)
 	}
 }
 
@@ -330,6 +446,460 @@ func TestCatalogGenerate(t *testing.T) {
 	}
 	if code, _, _ := runCLI(t, "catalog", "bogus"); code != exitUsage {
 		t.Fatalf("an unknown catalog subcommand exited %d", code)
+	}
+
+	// A failed raw input must leave an already usable final catalog untouched.
+	before, err := os.ReadFile(work.catalog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	broken := filepath.Join(work.dir, "broken-native.json")
+	if err := os.WriteFile(broken, []byte("not JSON"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	configData, err := os.ReadFile(work.configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	brokenConfig := filepath.Join(work.dir, "broken-config.json")
+	if err := os.WriteFile(brokenConfig, []byte(strings.Replace(string(configData), filepath.ToSlash(work.nativeCatalog), filepath.ToSlash(broken), 1)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if code, _, _ := runCLI(t, "catalog", "generate", "--config", brokenConfig); code != exitError {
+		t.Fatalf("invalid native JSON exited %d, want %d", code, exitError)
+	}
+	after, err := os.ReadFile(work.catalog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != string(before) {
+		t.Fatal("catalog generation failure replaced the old catalog")
+	}
+}
+
+func TestCatalogGenerateExportsNativeModelsWhenNoRawFileIsConfigured(t *testing.T) {
+	directory := t.TempDir()
+	configPath := filepath.Join(directory, "config.json")
+	output := filepath.Join(directory, "catalog.json")
+	configText := `{
+  "listen": {"host": "127.0.0.1", "port": 4317},
+  "catalog": {"output_file": "` + filepath.ToSlash(output) + `"},
+  "routes": [],
+  "native": {"models": []}
+}`
+	if err := os.WriteFile(configPath, []byte(configText), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(directory, "codex-home")
+	exporter := filepath.Join(directory, "fake-codex")
+	script := "#!/bin/sh\nprintf '%s' \"$CODEX_HOME\" > " + strconv.Quote(marker) + "\nprintf '%s\\n' '{\"models\":[{\"slug\":\"gpt-native\"}]}'\n"
+	if err := os.WriteFile(exporter, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CODEX_HOME", filepath.Join(directory, "user-codex-home"))
+	mustRun(t, exitOK, "catalog", "generate", "--config", configPath, "--codex", exporter)
+	home, err := os.ReadFile(marker)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(home) == os.Getenv("CODEX_HOME") || !filepath.IsAbs(string(home)) {
+		t.Fatalf("export used the user Codex home: %q", home)
+	}
+	if _, err := os.Stat(string(home)); !os.IsNotExist(err) {
+		t.Fatalf("temporary Codex home remains after export: %v", err)
+	}
+	generated, err := os.ReadFile(output)
+	if err != nil || !strings.Contains(string(generated), `"gpt-native"`) {
+		t.Fatalf("generated catalog = %s, %v", generated, err)
+	}
+	for name, script := range map[string]string{
+		"nonzero": "#!/bin/sh\necho export failed >&2\nexit 7\n",
+		"invalid": "#!/bin/sh\nprintf 'not JSON\\n'\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			brokenExporter := filepath.Join(directory, "broken-"+name)
+			if err := os.WriteFile(brokenExporter, []byte(script), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if code, _, _ := runCLI(t, "catalog", "generate", "--config", configPath, "--codex", brokenExporter); code != exitError {
+				t.Fatalf("broken export exited %d, want %d", code, exitError)
+			}
+			after, err := os.ReadFile(output)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(after) != string(generated) {
+				t.Fatal("failed export replaced the final catalog")
+			}
+		})
+	}
+	missingRaw := filepath.Join(directory, "missing-native.json")
+	missingRawConfig := strings.Replace(configText, `"output_file"`, `"native_catalog_file": "`+filepath.ToSlash(missingRaw)+`", "output_file"`, 1)
+	if err := os.WriteFile(configPath, []byte(missingRawConfig), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if code, _, _ := runCLI(t, "catalog", "generate", "--config", configPath); code != exitError {
+		t.Fatalf("missing explicit raw input exited %d, want %d", code, exitError)
+	}
+	after, err := os.ReadFile(output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != string(generated) {
+		t.Fatal("missing raw input replaced the final catalog")
+	}
+
+	// An explicit raw input remains offline and does not try to run --codex.
+	raw := filepath.Join(directory, "native.json")
+	if err := os.WriteFile(raw, generated, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(configPath, []byte(strings.Replace(configText, `"output_file"`, `"native_catalog_file": "`+filepath.ToSlash(raw)+`", "output_file"`, 1)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	mustRun(t, exitOK, "catalog", "generate", "--config", configPath, "--codex", filepath.Join(directory, "missing-codex"))
+}
+
+func TestSetupDryRunDoesNotWriteOrRunCodex(t *testing.T) {
+	home := t.TempDir()
+	configHome := t.TempDir()
+	dataHome := t.TempDir()
+	codexHome := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", configHome)
+	t.Setenv("XDG_DATA_HOME", dataHome)
+	t.Setenv("CODEX_HOME", codexHome)
+	t.Setenv("CODEX_MODEL_ROUTER_CONFIG", "")
+	marker := filepath.Join(home, "codex-ran")
+	exporter := filepath.Join(home, "fake-codex")
+	if err := os.WriteFile(exporter, []byte("#!/bin/sh\ntouch "+strconv.Quote(marker)+"\nexit 1\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	out := mustRun(t, exitOK, "setup", "--dry-run", "--configure-codex", "--codex", exporter)
+	for _, want := range []string{"would create native-only", "dry run: no files"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("dry-run output lacks %q:\n%s", want, out)
+		}
+	}
+	for _, path := range []string{
+		filepath.Join(configHome, "codex-model-router", "config.json"),
+		filepath.Join(dataHome, "codex-model-router", "catalog.json"),
+		filepath.Join(codexHome, "config.toml"), marker,
+	} {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatalf("dry run changed %s: %v", path, err)
+		}
+	}
+	if code, _, _ := runCLI(t, "setup", "--unknown-flag"); code != exitUsage {
+		t.Fatalf("unknown setup flag exited %d, want %d", code, exitUsage)
+	}
+}
+
+func TestSetupConfiguresCodexOnlyAfterAHealthyService(t *testing.T) {
+	work := newWorkspace(t)
+	codexHome := t.TempDir()
+	t.Setenv("CODEX_HOME", codexHome)
+	codexPath := filepath.Join(codexHome, "config.toml")
+	original := []byte("# keep this comment\n[plugins.example]\nenabled = true\n")
+	if err := os.WriteFile(codexPath, original, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	serviceFake := &fakeSetupService{}
+	previousFactory, previousHealth := setupServiceFactory, setupHealthWaiter
+	setupServiceFactory = func(_ *config.Config, options service.Options) setupService {
+		serviceFake.options = options
+		return serviceFake
+	}
+	setupHealthWaiter = func(_ *config.Config, _ time.Duration) (map[string]any, error) {
+		return map[string]any{"ok": true}, nil
+	}
+	defer func() {
+		setupServiceFactory = previousFactory
+		setupHealthWaiter = previousHealth
+	}()
+
+	mustRun(t, exitOK, "setup", "--config", work.configPath, "--bin", filepath.Join(work.dir, "router"), "--configure-codex")
+	if serviceFake.installs != 1 {
+		t.Fatalf("service install count = %d", serviceFake.installs)
+	}
+	if serviceFake.options.ConfigPath != work.configPath || serviceFake.options.BinaryPath != filepath.Join(work.dir, "router") {
+		t.Fatalf("service options = %+v", serviceFake.options)
+	}
+	updated, err := os.ReadFile(codexPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(updated), `openai_base_url = "http://127.0.0.1:4317/v1"`) || !strings.Contains(string(updated), "[plugins.example]") {
+		t.Fatalf("Codex configuration =\n%s", updated)
+	}
+	backup, err := os.ReadFile(codexPath + ".codex-model-router.bak")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(backup) != string(original) {
+		t.Fatal("Codex backup was not the exact pre-setup file")
+	}
+}
+
+func TestSetupHealthFailureLeavesCodexConfigurationUntouched(t *testing.T) {
+	work := newWorkspace(t)
+	codexHome := t.TempDir()
+	t.Setenv("CODEX_HOME", codexHome)
+	codexPath := filepath.Join(codexHome, "config.toml")
+	original := []byte("# do not change before health succeeds\n")
+	if err := os.WriteFile(codexPath, original, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	serviceFake := &fakeSetupService{}
+	previousFactory, previousHealth := setupServiceFactory, setupHealthWaiter
+	setupServiceFactory = func(_ *config.Config, _ service.Options) setupService { return serviceFake }
+	setupHealthWaiter = func(_ *config.Config, _ time.Duration) (map[string]any, error) {
+		return nil, errors.New("not ready")
+	}
+	defer func() {
+		setupServiceFactory = previousFactory
+		setupHealthWaiter = previousHealth
+	}()
+	if code, _, _ := runCLI(t, "setup", "--config", work.configPath, "--bin", filepath.Join(work.dir, "router"), "--configure-codex"); code != exitError {
+		t.Fatalf("unhealthy setup exited %d, want %d", code, exitError)
+	}
+	if serviceFake.installs != 1 {
+		t.Fatalf("service install count = %d", serviceFake.installs)
+	}
+	after, err := os.ReadFile(codexPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != string(original) {
+		t.Fatal("unhealthy service changed Codex configuration")
+	}
+	if _, err := os.Stat(codexPath + ".codex-model-router.bak"); !os.IsNotExist(err) {
+		t.Fatalf("unhealthy service created a Codex backup: %v", err)
+	}
+}
+
+func TestSetupCatalogFailureDoesNotInstallTheService(t *testing.T) {
+	work := newWorkspace(t)
+	data, err := os.ReadFile(work.configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	broken := filepath.Join(work.dir, "missing-native.json")
+	if err := os.WriteFile(work.configPath, []byte(strings.Replace(string(data), filepath.ToSlash(work.nativeCatalog), filepath.ToSlash(broken), 1)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	serviceFake := &fakeSetupService{}
+	previousFactory := setupServiceFactory
+	setupServiceFactory = func(_ *config.Config, _ service.Options) setupService { return serviceFake }
+	defer func() { setupServiceFactory = previousFactory }()
+	if code, _, _ := runCLI(t, "setup", "--config", work.configPath, "--bin", filepath.Join(work.dir, "router")); code != exitError {
+		t.Fatalf("broken catalog setup exited %d, want %d", code, exitError)
+	}
+	if serviceFake.installs != 0 {
+		t.Fatal("catalog failure disturbed the existing service")
+	}
+}
+
+func TestSetupRequiresRouteCredentialsBeforeCatalogOrService(t *testing.T) {
+	work := newWorkspace(t)
+	configureRouteCredential(t, work, "REMOTE_KEY")
+	serviceFake := &fakeSetupService{}
+	previousFactory := setupServiceFactory
+	setupServiceFactory = func(_ *config.Config, _ service.Options) setupService { return serviceFake }
+	defer func() { setupServiceFactory = previousFactory }()
+
+	for _, args := range [][]string{
+		{"setup", "--config", work.configPath, "--bin", filepath.Join(work.dir, "router")},
+		{"setup", "--dry-run", "--config", work.configPath, "--bin", filepath.Join(work.dir, "router")},
+		{"setup", "--config", work.configPath, "--bin", filepath.Join(work.dir, "router"), "--env", "REMOTE_KEY="},
+	} {
+		code, _, stderr := runCLI(t, args...)
+		if code != exitUsage || !strings.Contains(stderr, "--env REMOTE_KEY=VALUE") {
+			t.Fatalf("%v exited %d with %q, want credential usage error", args, code, stderr)
+		}
+	}
+	if serviceFake.installs != 0 || serviceFake.previews != 0 {
+		t.Fatalf("missing credentials reached service setup: %+v", serviceFake)
+	}
+	if _, err := os.Stat(work.catalog); !os.IsNotExist(err) {
+		t.Fatalf("missing credentials generated a catalog: %v", err)
+	}
+}
+
+func TestSetupPassesRequiredRouteCredentialToService(t *testing.T) {
+	work := newWorkspace(t)
+	configureRouteCredential(t, work, "REMOTE_KEY")
+	serviceFake := &fakeSetupService{}
+	previousFactory, previousHealth := setupServiceFactory, setupHealthWaiter
+	setupServiceFactory = func(_ *config.Config, options service.Options) setupService {
+		serviceFake.options = options
+		return serviceFake
+	}
+	setupHealthWaiter = func(_ *config.Config, _ time.Duration) (map[string]any, error) {
+		return map[string]any{"ok": true}, nil
+	}
+	defer func() {
+		setupServiceFactory = previousFactory
+		setupHealthWaiter = previousHealth
+	}()
+
+	mustRun(t, exitOK, "setup", "--config", work.configPath, "--bin", filepath.Join(work.dir, "router"), "--env", "REMOTE_KEY=provided")
+	if serviceFake.installs != 1 || serviceFake.options.Env["REMOTE_KEY"] != "provided" {
+		t.Fatalf("service options = %+v, installs=%d", serviceFake.options, serviceFake.installs)
+	}
+}
+
+func TestSetupDoesNotRequireNativeFallbackCredentialWithPassthrough(t *testing.T) {
+	work := newWorkspace(t)
+	configureNativeFallback(t, work, "NATIVE_FALLBACK_KEY")
+	serviceFake := &fakeSetupService{}
+	previousFactory, previousHealth := setupServiceFactory, setupHealthWaiter
+	setupServiceFactory = func(_ *config.Config, _ service.Options) setupService { return serviceFake }
+	setupHealthWaiter = func(_ *config.Config, _ time.Duration) (map[string]any, error) {
+		return map[string]any{"ok": true}, nil
+	}
+	defer func() {
+		setupServiceFactory = previousFactory
+		setupHealthWaiter = previousHealth
+	}()
+
+	mustRun(t, exitOK, "setup", "--config", work.configPath, "--bin", filepath.Join(work.dir, "router"))
+	if serviceFake.installs != 1 {
+		t.Fatalf("service install count = %d", serviceFake.installs)
+	}
+}
+
+func TestSetupRequiresNativeCredentialWhenPassthroughIsDisabled(t *testing.T) {
+	work := newWorkspace(t)
+	configureNativeCredentialRequirement(t, work, "NATIVE_KEY")
+	serviceFake := &fakeSetupService{}
+	previousFactory, previousHealth := setupServiceFactory, setupHealthWaiter
+	setupServiceFactory = func(_ *config.Config, options service.Options) setupService {
+		serviceFake.options = options
+		return serviceFake
+	}
+	setupHealthWaiter = func(_ *config.Config, _ time.Duration) (map[string]any, error) {
+		return map[string]any{"ok": true}, nil
+	}
+	defer func() {
+		setupServiceFactory = previousFactory
+		setupHealthWaiter = previousHealth
+	}()
+
+	if code, _, stderr := runCLI(t, "setup", "--config", work.configPath, "--bin", filepath.Join(work.dir, "router")); code != exitUsage || !strings.Contains(stderr, "--env NATIVE_KEY=VALUE") {
+		t.Fatalf("missing native credential exited %d with %q", code, stderr)
+	}
+	if serviceFake.installs != 0 || serviceFake.previews != 0 {
+		t.Fatalf("missing native credential reached service setup: %+v", serviceFake)
+	}
+	mustRun(t, exitOK, "setup", "--config", work.configPath, "--bin", filepath.Join(work.dir, "router"), "--env", "NATIVE_KEY=provided")
+	if serviceFake.installs != 1 || serviceFake.options.Env["NATIVE_KEY"] != "provided" {
+		t.Fatalf("service options = %+v, installs=%d", serviceFake.options, serviceFake.installs)
+	}
+}
+
+func TestSetupPropagatesDefaultCatalogDataHomeToService(t *testing.T) {
+	work := newWorkspace(t)
+	configureDefaultCatalogPath(t, work)
+	t.Setenv("HOME", t.TempDir())
+	dataHome := t.TempDir()
+	t.Setenv("XDG_DATA_HOME", dataHome)
+	serviceFake := &fakeSetupService{}
+	previousFactory, previousHealth := setupServiceFactory, setupHealthWaiter
+	setupServiceFactory = func(_ *config.Config, options service.Options) setupService {
+		serviceFake.options = options
+		return serviceFake
+	}
+	setupHealthWaiter = func(_ *config.Config, _ time.Duration) (map[string]any, error) {
+		return map[string]any{"ok": true}, nil
+	}
+	defer func() {
+		setupServiceFactory = previousFactory
+		setupHealthWaiter = previousHealth
+	}()
+
+	mustRun(t, exitOK, "setup", "--config", work.configPath, "--bin", filepath.Join(work.dir, "router"))
+	if serviceFake.options.Env["XDG_DATA_HOME"] != dataHome {
+		t.Fatalf("service data home = %q, want %q", serviceFake.options.Env["XDG_DATA_HOME"], dataHome)
+	}
+	if _, err := os.Stat(filepath.Join(dataHome, "codex-model-router", "catalog.json")); err != nil {
+		t.Fatalf("setup did not generate the catalog in the propagated data home: %v", err)
+	}
+}
+
+func TestSetupValidatesExplicitCatalogDataHomeOverride(t *testing.T) {
+	work := newWorkspace(t)
+	configureDefaultCatalogPath(t, work)
+	dataHome := t.TempDir()
+	t.Setenv("XDG_DATA_HOME", dataHome)
+	serviceFake := &fakeSetupService{}
+	previousFactory := setupServiceFactory
+	setupServiceFactory = func(_ *config.Config, options service.Options) setupService {
+		serviceFake.options = options
+		return serviceFake
+	}
+	defer func() { setupServiceFactory = previousFactory }()
+
+	mustRun(t, exitOK, "setup", "--dry-run", "--config", work.configPath, "--bin", filepath.Join(work.dir, "router"), "--env", "XDG_DATA_HOME="+dataHome)
+	if serviceFake.previews != 1 || serviceFake.options.Env["XDG_DATA_HOME"] != dataHome {
+		t.Fatalf("matching XDG_DATA_HOME was not preserved: %+v", serviceFake)
+	}
+	conflicting := t.TempDir()
+	code, _, stderr := runCLI(t, "setup", "--dry-run", "--config", work.configPath, "--bin", filepath.Join(work.dir, "router"), "--env", "XDG_DATA_HOME="+conflicting)
+	if code != exitUsage || !strings.Contains(stderr, "conflicts with the catalog data home") {
+		t.Fatalf("conflicting XDG_DATA_HOME exited %d with %q", code, stderr)
+	}
+	if serviceFake.previews != 1 || serviceFake.installs != 0 {
+		t.Fatalf("conflicting XDG_DATA_HOME reached service setup: %+v", serviceFake)
+	}
+}
+
+func TestServicePreviewPropagatesDefaultCatalogDataHome(t *testing.T) {
+	work := newWorkspace(t)
+	configureDefaultCatalogPath(t, work)
+	t.Setenv("HOME", t.TempDir())
+	dataHome := t.TempDir()
+	t.Setenv("XDG_DATA_HOME", dataHome)
+	binary := filepath.Join(work.dir, "router")
+	if err := os.WriteFile(binary, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	out := mustRun(t, exitOK, "service", "preview", "--config", work.configPath, "--bin", binary)
+	if !strings.Contains(out, "XDG_DATA_HOME") || !strings.Contains(out, dataHome) {
+		t.Fatalf("service preview omitted effective XDG data home:\n%s", out)
+	}
+}
+
+func TestSetupDryRunIgnoresRelativeXDGConfigHomeOnLinux(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("systemd unit path applies on Linux")
+	}
+	work := newWorkspace(t)
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", "relative-config")
+	mustRun(t, exitOK, "setup", "--dry-run", "--config", work.configPath, "--bin", filepath.Join(work.dir, "router"))
+}
+
+func TestDefaultConfigPathHonorsOnlyAbsoluteXDGValues(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("CODEX_MODEL_ROUTER_CONFIG", "")
+	absolute := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", absolute)
+	path, err := defaultConfigPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if path != filepath.Join(absolute, "codex-model-router", "config.json") {
+		t.Fatalf("absolute XDG config path = %q", path)
+	}
+	t.Setenv("XDG_CONFIG_HOME", "relative-config")
+	path, err = defaultConfigPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if path != filepath.Join(home, ".config", "codex-model-router", "config.json") {
+		t.Fatalf("relative XDG config path = %q", path)
 	}
 }
 
@@ -537,8 +1107,9 @@ func TestInstalledConfigurationAndCatalog(t *testing.T) {
 	t.Setenv("CODEX_MODEL_ROUTER_CONFIG", "")
 	t.Setenv("CODEX_MODEL_ROUTER_BIN", "")
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
 	t.Chdir(t.TempDir())
-	directory := filepath.Join(home, ".local", "lib", "codex-model-router")
+	directory := filepath.Join(os.Getenv("XDG_CONFIG_HOME"), "codex-model-router")
 	path := filepath.Join(directory, "config.json")
 	if err := os.MkdirAll(directory, 0o755); err != nil {
 		t.Fatal(err)
@@ -547,12 +1118,13 @@ func TestInstalledConfigurationAndCatalog(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	data = []byte(strings.Replace(string(data), `"output_file": "catalog.json"`, `"output_file": ""`, 1))
 	if err := os.WriteFile(path, data, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	mustRun(t, exitOK, "validate")
 	mustRun(t, exitOK, "catalog", "generate")
-	generated := filepath.Join(directory, "catalog.json")
+	generated := filepath.Join(os.Getenv("XDG_DATA_HOME"), "codex-model-router", "catalog.json")
 	catalogData, err := os.ReadFile(generated)
 	if err != nil {
 		t.Fatal(err)
@@ -561,7 +1133,7 @@ func TestInstalledConfigurationAndCatalog(t *testing.T) {
 		t.Fatalf("installed catalog has %d entries: %v", count, err)
 	}
 	preview := mustRun(t, exitOK, "service", "preview")
-	if !strings.Contains(preview, path) || !strings.Contains(preview, filepath.Join(directory, "codex-model-router")) {
+	if !strings.Contains(preview, path) || !strings.Contains(preview, filepath.Join(home, ".local", "bin", "codex-model-router")) {
 		t.Fatalf("service does not use the installed runtime paths:\n%s", preview)
 	}
 }

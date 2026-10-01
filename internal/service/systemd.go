@@ -12,16 +12,13 @@ import (
 
 // DefaultUnitDir respects XDG_CONFIG_HOME for systemd's user unit search path.
 func DefaultUnitDir() (string, error) {
-	base := os.Getenv("XDG_CONFIG_HOME")
-	if base == "" {
+	base := strings.TrimSpace(os.Getenv("XDG_CONFIG_HOME"))
+	if !filepath.IsAbs(base) {
 		home, err := os.UserHomeDir()
 		if err != nil {
 			return "", err
 		}
 		base = filepath.Join(home, ".config")
-	}
-	if !filepath.IsAbs(base) {
-		return "", errors.New("XDG_CONFIG_HOME must be absolute")
 	}
 	return filepath.Join(base, "systemd", "user"), nil
 }

@@ -75,13 +75,43 @@ func TestExampleConfigurationIsValid(t *testing.T) {
 	if err != nil {
 		t.Fatalf("the shipped example must be a valid configuration: %v", err)
 	}
-	if _, ok := cfg.RouteFor("qwen3-32b"); !ok {
-		t.Fatal("the example should route its documented model")
+	if len(cfg.Routes) != 0 || len(cfg.Native.Models) != 0 {
+		t.Fatalf("the example should be native-only, got routes=%v native=%v", cfg.Routes, cfg.Native.Models)
 	}
-	for _, route := range cfg.Routes {
-		if strings.HasPrefix(route.BaseURL, "https://") {
-			t.Fatalf("the example should stay on localhost, got %s", route.BaseURL)
-		}
+	if cfg.Catalog.OutputFile == "" || !cfg.CatalogUsesNativeModelIDs() {
+		t.Fatalf("the native-only example must accept its generated catalog: %+v", cfg.Catalog)
+	}
+}
+
+func TestCatalogOutputFileDefaultsToTheXDGDataPath(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	dataHome := t.TempDir()
+	t.Setenv("XDG_DATA_HOME", dataHome)
+	explicit := parse(t, strings.Replace(minimal(t), `"routes"`, `"catalog": {"output_file": ""}, "routes"`, 1))
+	if explicit.Catalog.OutputFile == "" {
+		t.Fatal("an explicit empty output_file should choose the XDG default")
+	}
+	omitted := parse(t, minimal(t))
+	if omitted.Catalog.OutputFile != explicit.Catalog.OutputFile {
+		t.Fatalf("an omitted output_file should choose the XDG default, got %q want %q", omitted.Catalog.OutputFile, explicit.Catalog.OutputFile)
+	}
+	if dataHome, ok := explicit.DefaultCatalogDataHome(); !ok || dataHome != filepath.Clean(dataHome) || dataHome != os.Getenv("XDG_DATA_HOME") {
+		t.Fatalf("default catalog data home = %q, %v", dataHome, ok)
+	}
+	t.Setenv("XDG_DATA_HOME", "relative-data-home")
+	fallback := parse(t, minimal(t))
+	wantFallback := filepath.Join(home, ".local", "share", "codex-model-router", "catalog.json")
+	if fallback.Catalog.OutputFile != wantFallback {
+		t.Fatalf("relative XDG_DATA_HOME should be ignored, got %q want %q", fallback.Catalog.OutputFile, wantFallback)
+	}
+}
+
+func TestImplicitMissingCatalogDoesNotBreakRoutesOnlyConfiguration(t *testing.T) {
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
+	cfg := parse(t, minimal(t))
+	if err := cfg.LoadRuntimeCatalog(); err != nil {
+		t.Fatalf("an implicit missing catalog should not break an existing route configuration: %v", err)
 	}
 }
 
@@ -431,7 +461,7 @@ func TestDuplicateNativeModelEntriesAreIgnored(t *testing.T) {
 }
 
 func TestNothingConfiguredIsAnError(t *testing.T) {
-	text := `{"listen": {"host": "127.0.0.1", "port": 4317}, "routes": [], "native": {"models": []}}`
+	text := `{"listen": {"host": "127.0.0.1", "port": 4317}, "routes": [], "native": {"models": []}, "catalog": {"native_model_ids_from_catalog": false}}`
 	if message := parseError(t, text); !strings.Contains(message, "no models are configured") {
 		t.Fatalf("error = %s", message)
 	}

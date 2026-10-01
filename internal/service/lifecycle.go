@@ -408,24 +408,14 @@ func DefaultLogDir(label string) (string, error) {
 	return filepath.Join(home, "Library", "Logs", label), nil
 }
 
-// DefaultInstallDir is the stable location for the executable the agent runs.
-// Keeping it outside any checkout means an upgrade of the checkout cannot break a
-// running agent.
-func DefaultInstallDir() (string, error) {
+// DefaultBinaryPath is the user-managed binary location. Package managers keep
+// their own paths; pass that path through --bin when installing the service.
+func DefaultBinaryPath() (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(home, ".local", "lib", "codex-model-router"), nil
-}
-
-// DefaultBinaryPath is the stable installed binary path.
-func DefaultBinaryPath() (string, error) {
-	directory, err := DefaultInstallDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(directory, "codex-model-router"), nil
+	return filepath.Join(home, ".local", "bin", "codex-model-router"), nil
 }
 
 func firstLine(err error) string {

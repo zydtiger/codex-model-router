@@ -26,8 +26,10 @@ import (
 	"github.com/zydtiger/codex-model-router/internal/config"
 )
 
-// Version is reported by the health endpoint and the version command.
-const Version = "0.1.0"
+// Version is reported by the health endpoint and the version command. Release
+// packaging sets it from the exact annotated Git tag with -ldflags; ordinary
+// development builds remain visibly unreleased.
+var Version = "dev"
 
 // HealthPath is the only route outside the configured base path.
 const HealthPath = "/healthz"

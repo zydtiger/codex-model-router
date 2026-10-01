@@ -7,6 +7,7 @@ toolchain go1.27.1
 require (
 	github.com/joho/godotenv v1.5.1
 	github.com/klauspost/compress v1.20.0
+	github.com/pelletier/go-toml/v2 v2.4.3
 	golang.org/x/net v0.59.0
 )
 

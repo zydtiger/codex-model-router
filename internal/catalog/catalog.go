@@ -75,9 +75,20 @@ func (c rawCatalog) MarshalJSON() ([]byte, error) {
 // entries are generated from the shape of a native entry and then checked for
 // the fields a native entry always carries.
 func Build(cfg *config.Config) ([]byte, error) {
-	nativeData, err := readNativeCatalog(cfg)
-	if err != nil {
-		return nil, err
+	return BuildWithNativeData(cfg, nil)
+}
+
+// BuildWithNativeData merges nativeData with configured local entries. A nil
+// nativeData reads catalog.native_catalog_file, preserving the explicit raw-file
+// workflow for offline use. A non-nil value is used as-is, so callers can keep
+// a freshly exported native catalog in memory.
+func BuildWithNativeData(cfg *config.Config, nativeData []byte) ([]byte, error) {
+	if nativeData == nil {
+		var err error
+		nativeData, err = readNativeCatalog(cfg)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	native := rawCatalog{}
@@ -175,7 +186,14 @@ func Build(cfg *config.Config) ([]byte, error) {
 // an explicit path. Nothing is written when writing fails partway: the file is
 // replaced atomically.
 func Generate(cfg *config.Config, outputPath string) ([]byte, string, error) {
-	encoded, err := Build(cfg)
+	return GenerateWithNativeData(cfg, outputPath, nil)
+}
+
+// GenerateWithNativeData builds a catalog with an optional in-memory native
+// input and atomically replaces only the final output. No configuration or
+// temporary native-input path is written.
+func GenerateWithNativeData(cfg *config.Config, outputPath string, nativeData []byte) ([]byte, string, error) {
+	encoded, err := BuildWithNativeData(cfg, nativeData)
 	if err != nil {
 		return nil, "", err
 	}
