@@ -3,6 +3,24 @@
 This file is the version history for codex-model-router. Copy the relevant
 released section verbatim into the corresponding GitHub release notes.
 
+## [0.2.0] - 2026-10-02
+
+### Added
+
+- Opt-in `routes[].input.developer_role_as_user` to wrap developer messages as
+  tagged user messages at their original positions, with a fixed convention
+  appended to top-level instructions. The setting defaults to `false` and does
+  not affect native ChatGPT or OpenAI API requests.
+- Coverage for message order, string and content-block preservation, stable
+  translated prefixes, route isolation, and JSON/SSE tool-call round trips.
+
+### Breaking
+
+- Removed `routes[].input.developer_role_as_system`. Delete this field from
+  existing configurations before upgrading; validation rejects it. Enable
+  `developer_role_as_user` where tagged-user conversion is needed. With the new
+  setting disabled, developer messages and top-level instructions are preserved.
+
 ## [0.1.0] - 2026-09-30
 
 ### Added
