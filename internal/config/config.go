@@ -196,8 +196,9 @@ type Input struct {
 	// CustomTools handles free-form custom tool calls and outputs. Default
 	// map_to_function_calls.
 	CustomTools string `json:"custom_tools"`
-	// DeveloperRoleAsSystem rewrites developer messages to system role.
-	DeveloperRoleAsSystem *bool `json:"developer_role_as_system"`
+	// DeveloperRoleAsUser wraps developer messages as tagged user messages.
+	// Default false preserves the upstream's native developer-role handling.
+	DeveloperRoleAsUser bool `json:"developer_role_as_user"`
 	// UnknownItems handles input item types the router does not model.
 	// Default drop, which prevents sending unmodelled state to a server that
 	// cannot validate it.
@@ -494,11 +495,6 @@ func (c *Config) PreserveClientAuth() bool {
 // allow list.
 func (c *Config) CatalogUsesNativeModelIDs() bool {
 	return c.Catalog.NativeModelIDsFromCatalog == nil || *c.Catalog.NativeModelIDsFromCatalog
-}
-
-// DeveloperRoleAsSystem reports the route's developer-role policy.
-func (r *Route) DeveloperRoleAsSystem() bool {
-	return r.Input.DeveloperRoleAsSystem == nil || *r.Input.DeveloperRoleAsSystem
 }
 
 // Addr returns the listener address for the validated configuration.
@@ -824,10 +820,6 @@ func (r *Route) validate() error {
 	}
 	if err := normalizePolicy(&r.Input.UnknownItems, PolicyDrop, PolicyKeep, PolicyReject); err != nil {
 		return fmt.Errorf("input.unknown_items: %w", err)
-	}
-	if r.Input.DeveloperRoleAsSystem == nil {
-		enabled := true
-		r.Input.DeveloperRoleAsSystem = &enabled
 	}
 	if r.ResponseHeaderTimeoutSeconds < -1 {
 		return errors.New("response_header_timeout_seconds must be -1, 0, or positive")

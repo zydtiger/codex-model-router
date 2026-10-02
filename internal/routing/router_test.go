@@ -767,7 +767,7 @@ func TestToolHistorySurvivesAndProviderStateIsDropped(t *testing.T) {
 	router, logs := newRouter(t, fmt.Sprintf(`{
       "listen": {"host": "127.0.0.1", "port": 4317},
       "native": {"chatgpt_base_url": "http://127.0.0.1:1/backend-api/codex", "api_base_url": "http://127.0.0.1:1/v1", "models": ["gpt-5"]},
-      "routes": [{"name":"local","base_url":%q,"models":["qwen3-32b"]}]
+      "routes": [{"name":"local","base_url":%q,"models":["qwen3-32b"],"input":{"developer_role_as_user":true}}]
     }`, local.server.URL), nil)
 
 	body := jsonBody(t, map[string]any{
@@ -818,7 +818,7 @@ func TestToolHistorySurvivesAndProviderStateIsDropped(t *testing.T) {
 			t.Fatalf("content %q was lost: %s", text, forwarded)
 		}
 	}
-	// developer became system so a chat-style server accepts the history.
+	// Developer instructions use tagged user messages for self-hosted servers.
 	var developerKept bool
 	for _, item := range payload.Input {
 		if strings.Contains(string(item["type"]), "message") && strings.Contains(string(item["role"]), "developer") {

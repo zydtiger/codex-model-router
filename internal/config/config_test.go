@@ -400,8 +400,8 @@ func TestInputPoliciesAreValidated(t *testing.T) {
 	if cfg.Routes[0].Input.ReasoningItems != config.PolicyDrop {
 		t.Fatalf("reasoning_items default = %q, want drop", cfg.Routes[0].Input.ReasoningItems)
 	}
-	if !cfg.Routes[0].DeveloperRoleAsSystem() {
-		t.Fatal("developer_role_as_system should default to true")
+	if cfg.Routes[0].Input.DeveloperRoleAsUser {
+		t.Fatal("developer_role_as_user should default to false")
 	}
 }
 
@@ -649,5 +649,26 @@ func TestRelativePathsResolveAgainstTheConfigFile(t *testing.T) {
 	}
 	if parsed.Catalog.OutputFile != "generated/router-models.json" {
 		t.Fatalf("Parse changed a relative path: %q", parsed.Catalog.OutputFile)
+	}
+}
+
+func TestRemovedDeveloperRoleSettingIsRejected(t *testing.T) {
+	for _, value := range []string{"true", "false"} {
+		text := strings.Replace(minimal(t), `"models": ["qwen3"]`,
+			`"models": ["qwen3"], "input": {"developer_role_as_system": `+value+`}`, 1)
+		if message := parseError(t, text); !strings.Contains(message, `unknown field "developer_role_as_system"`) {
+			t.Fatalf("value %s error = %s, want an unknown-field error", value, message)
+		}
+	}
+}
+
+func TestDeveloperRoleAsUserSetting(t *testing.T) {
+	for _, value := range []string{"true", "false"} {
+		text := strings.Replace(minimal(t), `"models": ["qwen3"]`,
+			`"models": ["qwen3"], "input": {"developer_role_as_user": `+value+`}`, 1)
+		cfg := parse(t, text)
+		if got := cfg.Routes[0].Input.DeveloperRoleAsUser; got != (value == "true") {
+			t.Fatalf("developer_role_as_user = %t, want %s", got, value)
+		}
 	}
 }
