@@ -138,6 +138,7 @@ type requestState struct {
 	disclosure    *toolDisclosure
 	compaction    *compactionRequest
 	responseLimit int64
+	diagnostics   *responseDiagnostics
 }
 
 type stateKey struct{}
@@ -556,6 +557,8 @@ func (t *target) targetURL(rest, rawQuery string) *url.URL {
 func (t *target) modifyResponse(resp *http.Response) error {
 	if state, ok := resp.Request.Context().Value(stateKey{}).(*requestState); ok && state != nil {
 		state.status = resp.StatusCode
+		state.diagnostics = &responseDiagnostics{}
+		state.diagnostics.capture(resp)
 		if state.compaction != nil {
 			return adaptCompactionResponse(resp, state.compaction, state.responseLimit)
 		}
@@ -594,12 +597,15 @@ func (t *target) handleError(w http.ResponseWriter, r *http.Request, err error) 
 	if state != nil {
 		state.status = status
 		state.result = "upstream_error"
-	}
-	// The underlying error is logged without the request body or headers.
-	if status == http.StatusBadGateway {
-		// Only the error class is recorded: transport errors can echo a URL,
-		// never credentials, but model content is never included.
-		slog.Default().Debug("upstream request failed", "target", t.name, "error", errorClass(err))
+		if status == statusClientClosed {
+			state.result = "cancelled"
+		}
+		if state.diagnostics == nil {
+			state.diagnostics = &responseDiagnostics{}
+		}
+		state.diagnostics.mu.Lock()
+		state.diagnostics.err = err
+		state.diagnostics.mu.Unlock()
 	}
 	writeJSONError(w, status, "upstream_error", message)
 }
@@ -615,6 +621,8 @@ func errorClass(err error) string {
 		return "host_unreachable"
 	case errors.Is(err, io.EOF):
 		return "connection_closed"
+	case errors.Is(err, io.ErrUnexpectedEOF):
+		return "unexpected_eof"
 	default:
 		return "transport_error"
 	}
@@ -651,16 +659,13 @@ func (h *Router) finish(recorder *responseRecorder, r *http.Request, state *requ
 		switch {
 		case r.Context().Err() != nil:
 			result = "cancelled"
-		case aborted, recorder.writeErr != nil:
+		case aborted, recorder.writeErr != nil, state.diagnostics.failed():
 			result = "stream_error"
-			h.countUpstreamErrs.Add(1)
 		case status == 0:
 			status = http.StatusBadGateway
 			result = "no_response"
-			h.countUpstreamErrs.Add(1)
 		case status >= http.StatusInternalServerError:
 			result = "upstream_error"
-			h.countUpstreamErrs.Add(1)
 		default:
 			result = "ok"
 		}
@@ -672,7 +677,10 @@ func (h *Router) finish(recorder *responseRecorder, r *http.Request, state *requ
 	if recorder.writeErr != nil {
 		h.log.Warn("response write failed", "route", state.route, "model", state.model, "error", recorder.writeErr)
 	}
-	if h.cfg.Log.Requests {
+	if result == "upstream_error" || result == "stream_error" || result == "no_response" {
+		h.countUpstreamErrs.Add(1)
+		h.log.Warn("upstream request failed", h.diagnosticAttrs(state, status, result)...)
+	} else if h.cfg.Log.Requests {
 		h.logActivity(state, status, result)
 	}
 }
@@ -681,15 +689,7 @@ func (h *Router) finish(recorder *responseRecorder, r *http.Request, state *requ
 func (h *Router) logActivity(state *requestState, status int, result string) {
 	h.activityMu.Lock()
 	defer h.activityMu.Unlock()
-	h.log.Info("routed",
-		"route", state.route,
-		"model", state.model,
-		"method", state.method,
-		"path", state.rest,
-		"status", status,
-		"duration_ms", time.Since(state.started).Milliseconds(),
-		"result", result,
-	)
+	h.log.Info("routed", h.diagnosticAttrs(state, status, result)...)
 }
 
 func (h *Router) reject(w http.ResponseWriter, status int, code, message string) {

@@ -3,6 +3,17 @@
 This file is the version history for codex-model-router. Copy the relevant
 released section verbatim into the corresponding GitHub release notes.
 
+## [0.2.1] - 2026-10-10
+
+### Fixed
+
+- Log upstream transport and response-stream failures through the configured
+  logger at WARN, including when per-request logging is disabled.
+- Include bounded upstream response metadata, byte counts, TLS alerts, and
+  typed network errors without recording request bodies or credentials.
+- Count failures before response headers in health metrics and distinguish
+  client cancellation from upstream failures.
+
 ## [0.2.0] - 2026-10-02
 
 ### Added

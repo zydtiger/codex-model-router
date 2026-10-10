@@ -208,9 +208,12 @@ flushed incrementally, and client cancellation propagates upstream. Provider
 reasoning and compaction state handling is configurable; review those settings
 before switching providers mid-conversation.
 
-Request bodies and authentication headers are not intentionally logged. There is
-no general secret-redaction filter. Request logs include model and route metadata
-when enabled; inspect logs before sharing them. Success request logging defaults
+Upstream request and stream failures are logged at warning level, even when
+request logging is disabled. Logs include model and route metadata, upstream
+request ID, response content type and protocol, bytes read, EOF state, and safe
+transport error details. Request/response bodies, authentication headers, cookies,
+and arbitrary error strings are not logged. There is no general secret-redaction
+filter; inspect metadata before sharing logs. Success request logging defaults
 to off, and log rotation is not provided.
 
 ## Documentation

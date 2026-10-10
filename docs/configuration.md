@@ -158,11 +158,18 @@ streaming read, not on `Content-Length`, so a lying header does not help.
 | Key            | Default | Meaning                                                     |
 | -------------- | ------- | ------------------------------------------------------------ |
 | `log.level`    | `info`  | `debug`, `info`, `warn`, or `error`                          |
-| `log.requests` | `false` | One line per request: method, path, model, route, status, duration |
+| `log.requests` | `false` | Log successful requests at info level, with routing and upstream response metadata |
 
-Bodies and headers are never logged, at any level. Values in `--log-level` and
-`log.level` are the only knobs. Model IDs and route metadata appear in the
-per-request line; the log is written to stderr, which launchd redirects to your
+Upstream request and stream failures are logged at warning level independently
+of `log.requests`, using the configured logger. Request lines include method,
+path, model, route, status, duration, upstream request ID, response content type,
+HTTP protocol, bytes read and whether the upstream reached EOF. Transport failures
+include error types and available OS, network-operation, timeout and TLS-alert
+details. A clean HTTP EOF does not establish that an SSE response completed.
+
+Bodies, authentication headers, cookies and arbitrary error strings are never
+logged. Only the named response metadata is recorded; there is no general
+secret-redaction filter. The log is written to stderr, which launchd redirects to your
 own log directory (see [launchd](launchd.md)), so keep that directory off shared
 storage. `service install` writes the plist `0600` when `--env` carries a key.
 
