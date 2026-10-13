@@ -196,19 +196,28 @@ its configured endpoint override; API-key and self-hosted routes retain their
 existing process-environment proxy behavior. Restart the router after edits.
 
 The listener and request peers must be loopback. Supported endpoints are
-`GET /healthz`, `POST <base_path>/responses` plus Responses subpaths, and
-`POST <base_path>/alpha/search` for the standalone web tool; the default base
-path is `/v1`. Standalone web requests preserve their payload and use native
-authentication routing, without requiring a model or contacting self-hosted routes. WebSocket upgrades return 426; HTTP fallback depends on the
-client. The router requires a Responses API upstream and does not implement a
+`GET /healthz`, `POST <base_path>/responses` plus Responses subpaths,
+`POST <base_path>/alpha/search` for the standalone web tool, and
+`POST <base_path>/images/generations` and `POST <base_path>/images/edits` for
+native image tools; the default base path is `/v1`. Standalone web and image
+requests preserve their payload and use native
+authentication routing, without requiring a model or contacting self-hosted routes.
+A self-hosted chat model can invoke Codex's image tool while the separate image
+request uses the incoming ChatGPT authentication. This requires the client to
+expose the tool and send native credentials on the image request; it does not
+redirect image tools embedded in a remote Responses payload. WebSocket upgrades
+return 426; HTTP fallback depends on the client. The router requires a Responses API upstream and does not implement a
 Chat Completions bridge.
 
-Request bodies are bounded before and after gzip/zstd decompression. SSE is
-flushed incrementally, and client cancellation propagates upstream. Provider
+Request bodies are bounded before and after gzip/zstd decompression. Native
+image responses are streamed without a response-size cap or JSON
+adaptation; `max_request_bytes` still bounds image uploads, including decoded
+compressed bodies. SSE is flushed incrementally, and client cancellation propagates upstream. Provider
 reasoning and compaction state handling is configurable; review those settings
 before switching providers mid-conversation.
 
-Upstream request and stream failures are logged at warning level, even when
+Rejected endpoint method/path metadata (without query strings or bodies) and
+upstream request and stream failures are logged at warning level, even when
 request logging is disabled. Logs include model and route metadata, upstream
 request ID, response content type and protocol, bytes read, EOF state, and safe
 transport error details. Request/response bodies, authentication headers, cookies,

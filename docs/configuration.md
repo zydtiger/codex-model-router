@@ -37,6 +37,8 @@ error messages:
 | `POST <base_path>/responses`         | routed to the selected upstream            |
 | `POST <base_path>/responses/*`       | routed as well, for a future subresource                  |
 | `POST <base_path>/alpha/search` | standalone web tool; native upstream only, no model required |
+| `POST <base_path>/images/generations` | image generation; native upstream only, no model required |
+| `POST <base_path>/images/edits` | image editing; native upstream only, no model required |
 | `GET /healthz`                       | health document; the one route outside `<base_path>`      |
 | anything else                        | `404` (`405` for another method on a supported endpoint)    |
 | an `Upgrade: websocket` request      | `426 Upgrade Required`                                    |

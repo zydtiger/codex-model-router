@@ -9,7 +9,15 @@ import (
 	"testing"
 )
 
-func TestWebSearchNativeForwarding(t *testing.T) {
+func TestStandaloneNativeForwarding(t *testing.T) {
+	for _, endpoint := range []string{"/alpha/search", "/images/generations", "/images/edits"} {
+		t.Run(endpoint, func(t *testing.T) {
+			testStandaloneNativeForwarding(t, endpoint)
+		})
+	}
+}
+
+func testStandaloneNativeForwarding(t *testing.T, endpoint string) {
 	for _, account := range []bool{true, false} {
 		for _, compressed := range []bool{false, true} {
 			t.Run(fmt.Sprintf("account=%v/gzip=%v", account, compressed), func(t *testing.T) {
@@ -36,13 +44,13 @@ func TestWebSearchNativeForwarding(t *testing.T) {
 					body = buf.Bytes()
 					headers["Content-Encoding"] = "gzip"
 				}
-				got := doRequest(router, http.MethodPost, "/v1/alpha/search?mode=live", body, headers)
+				got := doRequest(router, http.MethodPost, "/v1"+endpoint+"?mode=live", body, headers)
 				if got.Code != 202 || got.Body.String() != reply {
 					t.Fatalf("response: %d %s", got.Code, got.Body.String())
 				}
-				selected, other, path := api, chat, "/v1/alpha/search"
+				selected, other, path := api, chat, "/v1"+endpoint
 				if account {
-					selected, other, path = chat, api, "/backend-api/codex/alpha/search"
+					selected, other, path = chat, api, "/backend-api/codex"+endpoint
 				}
 				if selected.count() != 1 || other.count() != 0 || remote.count() != 0 {
 					t.Fatal("wrong destination")

@@ -35,7 +35,7 @@ var Version = "dev"
 const HealthPath = "/healthz"
 
 // responsesSuffix is the model endpoint namespace Codex appends to
-// openai_base_url. The standalone web tool has a separate native-only endpoint.
+// openai_base_url. Standalone tools have separate native-only endpoints.
 const responsesSuffix = "/responses"
 
 // accountIDHeader selects the native ChatGPT backend. Its presence, not a
@@ -271,6 +271,7 @@ func (h *Router) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	rest, ok := trimBasePath(r.URL.Path, h.cfg.BasePath)
 	if !ok || rest == "" {
+		h.log.Warn("endpoint rejected", "method", r.Method, "path", r.URL.Path)
 		h.reject(w, http.StatusNotFound, "not_found", "no route matches this path")
 		return
 	}
@@ -282,12 +283,13 @@ func (h *Router) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.reject(w, http.StatusUpgradeRequired, "upgrade_required", "this router serves the HTTP Responses transport")
 		return
 	}
-	if rest == "/alpha/search" {
-		h.serveWebSearch(w, r, rest, started)
+	if rest == "/alpha/search" || rest == "/images/generations" || rest == "/images/edits" {
+		h.serveNativeTool(w, r, rest, started)
 		return
 	}
 	if rest != responsesSuffix && !strings.HasPrefix(rest, responsesSuffix+"/") {
-		h.reject(w, http.StatusNotFound, "not_found", "only Responses and standalone web search endpoints are proxied")
+		h.log.Warn("endpoint rejected", "method", r.Method, "path", r.URL.Path)
+		h.reject(w, http.StatusNotFound, "not_found", "only Responses, standalone web search, and image generation/edit endpoints are proxied")
 		return
 	}
 	if r.Method != http.MethodPost {
@@ -328,9 +330,10 @@ func (h *Router) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h.finish(recorder, proxyRequest, state, aborted)
 }
 
-// serveWebSearch forwards Codex's standalone web tool without requiring a model
-// or translating its payload. Web requests only go to trusted native upstreams.
-func (h *Router) serveWebSearch(w http.ResponseWriter, r *http.Request, rest string, started time.Time) {
+// serveNativeTool forwards standalone tools without requiring a model or
+// translating their payloads. These requests only go to trusted native upstreams,
+// independently of the model driving the conversation.
+func (h *Router) serveNativeTool(w http.ResponseWriter, r *http.Request, rest string, started time.Time) {
 	if r.Method != http.MethodPost {
 		h.methodNotAllowed(w, http.MethodPost)
 		return
