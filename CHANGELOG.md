@@ -3,6 +3,15 @@
 This file is the version history for codex-model-router. Copy the relevant
 released section verbatim into the corresponding GitHub release notes.
 
+## [0.2.2] - 2026-10-13
+
+### Fixed
+
+- Proxy native image generation and editing endpoints, allowing self-hosted
+  chat models to use Codex's image tool through ChatGPT authentication.
+- Preserve image payloads, streaming, cancellation, and upstream errors; log
+  rejected endpoint methods and paths for diagnosis.
+
 ## [0.2.1] - 2026-10-10
 
 ### Fixed
