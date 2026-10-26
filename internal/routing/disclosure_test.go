@@ -373,7 +373,7 @@ func TestDisclosureRejectsManagedHistoryBeforeForwarding(t *testing.T) {
 	}
 }
 
-func TestDisclosureFollowupFailureAndRequestLimit(t *testing.T) {
+func TestDisclosureFollowupFailureAndExpandedRequest(t *testing.T) {
 	for _, stream := range []bool{false, true} {
 		round := 0
 		up := newUpstream(t, func(w http.ResponseWriter, r *http.Request) {
@@ -402,8 +402,14 @@ func TestDisclosureFollowupFailureAndRequestLimit(t *testing.T) {
 	mapping, _ := flattenNamespaces(fields)
 	d := prepareToolDisclosure(fields, mapping)
 	_ = d.load(`{"namespaces":["unrelated_mail"]}`)
-	req, _ := http.NewRequest(http.MethodPost, "http://127.0.0.1:1/responses", nil)
-	if _, err := d.nextResponse(context.Background(), req, http.DefaultTransport, 100); err == nil || !strings.Contains(err.Error(), "size limit") {
-		t.Fatal("expanded request was not bounded")
+	up := newUpstream(t, nil)
+	req, _ := http.NewRequest(http.MethodPost, up.server.URL+"/responses", nil)
+	resp, err := d.nextResponse(context.Background(), req, http.DefaultTransport)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if up.count() != 1 || len(up.requests()[0].Body) <= 100 {
+		t.Fatal("expanded request did not reach upstream")
 	}
 }

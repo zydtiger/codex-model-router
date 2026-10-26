@@ -4,7 +4,6 @@
     "port": 4317
   },
   "base_path": "/v1",
-  "max_request_bytes": 33554432,
   "log": {
     "level": "warn",
     "requests": false

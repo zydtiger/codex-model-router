@@ -13,10 +13,10 @@ import (
 
 // adaptCustomResponse restores bridged custom-tool traffic in upstream
 // responses. JSON bodies are rewritten whole; SSE streams are rewritten event
-// by event with per-call state, bounded buffering, and monotonic sequence
+// by event with per-call state and monotonic sequence
 // numbering. It must run after the namespace restoration, because custom
 // identities are keyed by (namespace, name).
-func adaptCustomResponse(resp *http.Response, mapping *customMapping, limit int64) error {
+func adaptCustomResponse(resp *http.Response, mapping *customMapping) error {
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil
 	}
@@ -26,17 +26,14 @@ func adaptCustomResponse(resp *http.Response, mapping *customMapping, limit int6
 	mediaType, _, _ := mime.ParseMediaType(resp.Header.Get("Content-Type"))
 	if mediaType == "text/event-stream" {
 		scanner := bufio.NewScanner(resp.Body)
-		scanner.Buffer(make([]byte, 4096), int(limit)+1)
-		resp.Body = &customStream{source: resp.Body, scanner: scanner, mapping: mapping, limit: limit,
+		scanner.Buffer(make([]byte, 4096), int(^uint(0)>>1))
+		resp.Body = &customStream{source: resp.Body, scanner: scanner, mapping: mapping,
 			calls: make(map[string]*customCall), byIndex: make(map[int]*customCall)}
 	} else {
-		body, err := io.ReadAll(io.LimitReader(resp.Body, limit+1))
+		body, err := io.ReadAll(resp.Body)
 		_ = resp.Body.Close()
 		if err != nil {
 			return err
-		}
-		if int64(len(body)) > limit {
-			return fmt.Errorf("custom tool response exceeds size limit")
 		}
 		restored, err := mapping.restoreCustomResponse(body)
 		if err != nil {
@@ -51,8 +48,7 @@ func adaptCustomResponse(resp *http.Response, mapping *customMapping, limit int6
 }
 
 // customCall tracks one in-flight or completed bridged custom tool call in an
-// SSE stream. Completed calls keep only their input, counted against the same
-// aggregate bound as pending argument buffers.
+// SSE stream. Completed calls retain their input to validate duplicate events.
 type customCall struct {
 	identity  toolIdentity
 	itemID    string
@@ -69,16 +65,13 @@ type customStream struct {
 	source   io.ReadCloser
 	scanner  *bufio.Scanner
 	mapping  *customMapping
-	limit    int64
 	pending  []byte
 	finished bool
 
-	calls      map[string]*customCall // keyed by upstream item id
-	byIndex    map[int]*customCall
-	bufferedSz int64
-	retained   int64
-	sequence   int64
-	numbered   bool
+	calls    map[string]*customCall // keyed by upstream item id
+	byIndex  map[int]*customCall
+	sequence int64
+	numbered bool
 }
 
 func (s *customStream) Close() error { return s.source.Close() }
@@ -126,13 +119,6 @@ func (s *customStream) register(identity toolIdentity, itemID, callID string, in
 			return nil, fmt.Errorf("custom tool call item id %q was registered twice", itemID)
 		}
 	}
-	// Charge each tracked call, including empty inputs, against a bounded
-	// state budget. The fixed allowance covers the struct and map entries.
-	cost := int64(256 + len(itemID) + len(callID) + len(identity.Namespace) + len(identity.Name))
-	if s.retained+s.bufferedSz+cost > s.limit {
-		return nil, fmt.Errorf("retained custom tool call state exceeds size limit")
-	}
-	s.retained += cost
 	call := &customCall{identity: identity, itemID: itemID, callID: callID, index: index}
 	if itemID != "" {
 		s.calls[itemID] = call
@@ -152,7 +138,7 @@ func (s *customStream) Read(p []byte) (int, error) {
 		if s.finished {
 			return 0, io.EOF
 		}
-		lines, data, err := readSSEFrame(s.scanner, s.limit)
+		lines, data, err := readSSEFrame(s.scanner)
 		if err != nil {
 			if err == io.EOF {
 				// A known custom call that never completed cannot be silently
@@ -331,20 +317,13 @@ func (s *customStream) resolveInput(call *customCall, arguments string) (string,
 }
 
 // finalize completes a call. The validated input is retained so late duplicate
-// events can be compared against it, and its size is charged to the same
-// aggregate bound as pending argument buffers.
-func (s *customStream) finalize(call *customCall, input string) error {
-	s.bufferedSz -= int64(len(call.buffered))
+// events can be compared against it.
+func (s *customStream) finalize(call *customCall, input string) {
 	call.buffered = ""
 	call.input = input
 	call.hasInput = true
 	call.emitted = true
 	call.finalized = true
-	s.retained += int64(len(input))
-	if s.bufferedSz+s.retained > s.limit {
-		return fmt.Errorf("retained custom tool call state exceeds size limit")
-	}
-	return nil
 }
 
 // transform rewrites one parsed event into the ordered list of events the
@@ -386,11 +365,7 @@ func (s *customStream) transform(event toolFields) ([]toolFields, error) {
 			return nil, fmt.Errorf("custom tool call received arguments after completion")
 		}
 		delta := event.string("delta")
-		if s.retained+s.bufferedSz+int64(len(delta)) > s.limit {
-			return nil, fmt.Errorf("buffered custom tool arguments exceed size limit")
-		}
 		call.buffered += delta
-		s.bufferedSz += int64(len(delta))
 		return nil, nil
 
 	case "response.function_call_arguments.done":
@@ -418,9 +393,7 @@ func (s *customStream) transform(event toolFields) ([]toolFields, error) {
 		if err != nil {
 			return nil, err
 		}
-		if err := s.finalize(call, input); err != nil {
-			return nil, err
-		}
+		s.finalize(call, input)
 		event.setString("type", "response.custom_tool_call_input.done")
 		event.setString("input", input)
 		delete(event, "arguments")
@@ -475,9 +448,7 @@ func (s *customStream) transform(event toolFields) ([]toolFields, error) {
 		if event["output_index"] != nil {
 			done["output_index"] = event["output_index"]
 		}
-		if err := s.finalize(call, input); err != nil {
-			return nil, err
-		}
+		s.finalize(call, input)
 		return []toolFields{s.inputDelta(done, input), done, event}, nil
 
 	case "response.completed":
@@ -585,9 +556,7 @@ func (s *customStream) completeFallback(event toolFields) ([]toolFields, error) 
 			done.setString("item_id", item.string("id"))
 		}
 		done["output_index"], _ = json.Marshal(call.index)
-		if err := s.finalize(call, input); err != nil {
-			return nil, err
-		}
+		s.finalize(call, input)
 		events = append(events, s.inputDelta(done, input), done)
 	}
 	response["output"], _ = json.Marshal(output)

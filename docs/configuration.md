@@ -51,7 +51,6 @@ error messages:
 {
   "listen": { "host": "127.0.0.1", "port": 4317 },
   "base_path": "/v1",
-  "max_request_bytes": 33554432,
   "log": { "level": "info", "requests": false },
   "native": {
     "chatgpt_base_url": "https://chatgpt.com/backend-api/codex",
@@ -148,12 +147,16 @@ prefix, so the two only have to agree with each other. Check that agreement with
 `codex-model-router validate`, which prints the exact URL a request would take;
 if Codex reports a 404 for `/v1/responses`, that printout is where to compare.
 
-## `max_request_bytes`
+## Request and response sizes
 
-Default 33554432 (32 MiB). It bounds the request body *after* gzip or zstd
-decompression, and the number of simultaneous zstd contexts is capped separately.
-A request over the limit gets `413`. The limit is enforced on the
-streaming read, not on `Content-Length`, so a lying header does not help.
+The router does not impose request or response byte limits. It reads request
+bodies into memory for model routing and protocol conversion, and buffers JSON
+responses or individual SSE events when an adapter needs to transform them.
+Upstreams decide which sizes they accept; initial upstream HTTP errors pass
+through unchanged.
+
+The former `max_request_bytes` setting has been removed. Remove it from existing
+configurations when upgrading.
 
 ## `log`
 
@@ -405,10 +408,7 @@ events. Call identity is tracked from the added item, so deltas that carry only
 `item_id`/`output_index` are handled. Custom input is validated once the
 complete arguments wrapper is available: the input is emitted as one delta
 followed by the done event rather than streamed token by token, and per-call
-argument buffering and retained call state share a `max_request_bytes` budget.
-Each tracked call has a fixed metadata allowance as well as its string payload,
-so even calls with empty input consume the budget. Suppressed
-and injected events are compensated by renumbering `sequence_number`
+argument data and call state are retained as needed to restore the calls. Suppressed and injected events are compensated by renumbering `sequence_number`
 monotonically across the adapted stream, and `event:` names stay in sync with
 the rewritten payloads. A stream that ends with an incomplete bridged call, or
 a completion that omits one, fails rather than reporting success.
@@ -422,8 +422,8 @@ includes every pass, and an explicit `max_output_tokens` budget is reduced
 before each follow-up. Missing usage under that explicit budget stops discovery.
 
 Adapted responses request identity encoding. JSON responses and individual SSE
-events are bounded by `max_request_bytes`; the complete SSE stream is not
-buffered. An invalid or oversized response fails with `502` before headers are
+events are buffered for conversion; the complete SSE stream is not buffered.
+An invalid response fails with `502` before headers are
 sent, or aborts an already-started stream. Initial upstream error responses pass
 through; a failed internal follow-up produces `502` or aborts an active stream.
 
@@ -598,7 +598,6 @@ on the code in a script.
 | `route_unavailable`               | `route "<name>" is not available`                                    | The config changed underneath a running router            |
 | `route_credentials_missing`       | names the variable                                                   | `auth.api_key_env` points at an unset variable            |
 | `native_credentials_missing`      | `native.api_key_env names $<VAR>, which is not set`                  | A native request had no client credential to forward      |
-| `request_too_large`               | `request body exceeds N bytes`                                       | Raise `max_request_bytes`                                 |
 | `invalid_reasoning`               | `reasoning effort "<x>" is not supported by this route`              | `unknown_effort: "error"` with an unmapped effort          |
 | `upgrade_required`                | `this router serves the HTTP Responses transport`                    | The client tried WebSocket; it should retry over HTTP      |
 | `host_not_loopback`               | `the Host header must name the loopback address`                     | Something reached the listener by another name             |
@@ -649,9 +648,8 @@ text checkpoint (`cmr.compaction.v1:`). Despite the protocol field name, this is
 self-contained: restart, resume, and fork do not require router memory or a
 separate checkpoint database. On replay, the router expands its checkpoints into
 ordinary user-context messages at the same history position, before generic
-input policies can drop them. They never become system instructions. Payloads
-are bounded to 256 KiB of decoded JSON; malformed or unsupported router payloads
-fail explicitly. Repeated compaction summarizes the prior checkpoint text.
+input policies can drop them. They never become system instructions. Malformed
+or unsupported router payloads fail explicitly. Repeated compaction summarizes the prior checkpoint text.
 
 Expansion applies to recognized router checkpoints on all routes, including
 native GPT routes, so switching from a summarized third-party conversation does

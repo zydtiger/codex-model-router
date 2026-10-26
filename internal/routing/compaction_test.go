@@ -149,7 +149,7 @@ func TestCompactionRejectsInvalidRequests(t *testing.T) {
 }
 
 func TestCompactionFailureNeverEmitsCheckpoint(t *testing.T) {
-	for _, kind := range []string{"incomplete", "empty", "tool", "refusal", "broken_stream", "oversized"} {
+	for _, kind := range []string{"incomplete", "empty", "tool", "refusal", "broken_stream"} {
 		t.Run(kind, func(t *testing.T) {
 			up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				f := summaryResponse()
@@ -166,8 +166,6 @@ func TestCompactionFailureNeverEmitsCheckpoint(t *testing.T) {
 					w.Header().Set("Content-Type", "text/event-stream")
 					w.Write([]byte("data: {\"type\":\"response.created\"}\n\n"))
 					return
-				case "oversized":
-					f["output"], _ = json.Marshal([]map[string]any{{"type": "message", "role": "assistant", "content": []map[string]string{{"type": "output_text", "text": strings.Repeat("x", maxCheckpointBytes+1)}}}})
 				}
 				w.Header().Set("Content-Type", "application/json")
 				json.NewEncoder(w).Encode(f)

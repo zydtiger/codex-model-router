@@ -6,7 +6,7 @@ self-hosted Responses API models from one Codex model selector.
 ## Status
 
 Implemented: exact model routing, native credential forwarding, isolated remote
-credentials, streaming, request limits, reasoning and namespace-tool adaptation,
+credentials, streaming, reasoning and namespace-tool adaptation,
 custom-tool bridging to function-only upstreams, combined
 catalog generation and platform service lifecycle commands (macOS LaunchAgent
 and Linux systemd user service).
@@ -209,10 +209,11 @@ redirect image tools embedded in a remote Responses payload. WebSocket upgrades
 return 426; HTTP fallback depends on the client. The router requires a Responses API upstream and does not implement a
 Chat Completions bridge.
 
-Request bodies are bounded before and after gzip/zstd decompression. Native
-image responses are streamed without a response-size cap or JSON
-adaptation; `max_request_bytes` still bounds image uploads, including decoded
-compressed bodies. SSE is flushed incrementally, and client cancellation propagates upstream. Provider
+Request and response size limits are left to the selected upstream, whose HTTP errors are
+forwarded unchanged. The router reads request bodies into memory for routing
+and protocol conversion; native compressed payloads are forwarded unchanged.
+Native image responses stream without a response-size cap or JSON adaptation.
+SSE is flushed incrementally, and client cancellation propagates upstream. Provider
 reasoning and compaction state handling is configurable; review those settings
 before switching providers mid-conversation.
 

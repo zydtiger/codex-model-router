@@ -14,28 +14,21 @@ import (
 
 // A summary is not exposed as a checkpoint until the upstream has completed
 // successfully. Closing/cancelling the incoming request cancels its transport.
-func readCompactionResponse(resp *http.Response, limit int64) (toolFields, error) {
+func readCompactionResponse(resp *http.Response) (toolFields, error) {
 	media, _, _ := mime.ParseMediaType(resp.Header.Get("Content-Type"))
 	if media != "text/event-stream" {
-		return readDisclosureJSON(resp, limit)
+		return readDisclosureJSON(resp)
 	}
 	defer resp.Body.Close()
 	if encoding := resp.Header.Get("Content-Encoding"); encoding != "" && encoding != "identity" {
 		return nil, fmt.Errorf("unsupported compaction encoding")
 	}
-	scanner := bufio.NewScanner(io.LimitReader(resp.Body, limit+1))
-	scanner.Buffer(make([]byte, 4096), int(limit)+1)
-	var consumed int64
+	scanner := bufio.NewScanner(resp.Body)
+	scanner.Buffer(make([]byte, 4096), int(^uint(0)>>1))
 	for {
-		lines, data, err := readSSEFrame(scanner, limit)
+		_, data, err := readSSEFrame(scanner)
 		if err != nil {
 			return nil, fmt.Errorf("compaction stream ended without completion: %w", err)
-		}
-		for _, line := range lines {
-			consumed += int64(len(line) + 1)
-		}
-		if consumed > limit {
-			return nil, fmt.Errorf("compaction response exceeds size limit")
 		}
 		if len(data) == 0 {
 			continue
@@ -89,18 +82,17 @@ func compactionSummary(response toolFields) (string, error) {
 		}
 	}
 	summary := strings.TrimSpace(strings.Join(texts, "\n"))
-	raw, _ := json.Marshal(map[string]string{"summary": summary})
-	if summary == "" || len(raw) > maxCheckpointBytes {
-		return "", fmt.Errorf("empty or oversized checkpoint summary")
+	if summary == "" {
+		return "", fmt.Errorf("empty checkpoint summary")
 	}
 	return summary, nil
 }
 
-func adaptCompactionResponse(resp *http.Response, c *compactionRequest, limit int64) error {
+func adaptCompactionResponse(resp *http.Response, c *compactionRequest) error {
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil
 	}
-	response, err := readCompactionResponse(resp, limit)
+	response, err := readCompactionResponse(resp)
 	if err != nil {
 		return err
 	}
@@ -139,7 +131,7 @@ func adaptCompactionResponse(resp *http.Response, c *compactionRequest, limit in
 			raw, _ := json.Marshal(event)
 			var fields toolFields
 			_ = json.Unmarshal(raw, &fields)
-			if err := writeDisclosureEvent(&buffer, fields, &seq, limit); err != nil {
+			if err := writeDisclosureEvent(&buffer, fields, &seq); err != nil {
 				return err
 			}
 		}
@@ -149,9 +141,6 @@ func adaptCompactionResponse(resp *http.Response, c *compactionRequest, limit in
 	} else {
 		encoded, _ = json.Marshal(final)
 		resp.Header.Set("Content-Type", "application/json")
-	}
-	if int64(len(encoded)) > limit {
-		return fmt.Errorf("checkpoint response exceeds size limit")
 	}
 	resp.Body = io.NopCloser(bytes.NewReader(encoded))
 	resp.ContentLength = -1

@@ -12,7 +12,7 @@ import (
 
 // adaptNamespaceResponse buffers only one SSE event at a time. Closing the
 // wrapper closes the upstream body, preserving cancellation and backpressure.
-func adaptNamespaceResponse(resp *http.Response, mapping *namespaceMapping, limit int64) error {
+func adaptNamespaceResponse(resp *http.Response, mapping *namespaceMapping) error {
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil
 	}
@@ -22,16 +22,13 @@ func adaptNamespaceResponse(resp *http.Response, mapping *namespaceMapping, limi
 	mediaType, _, _ := mime.ParseMediaType(resp.Header.Get("Content-Type"))
 	if mediaType == "text/event-stream" {
 		scanner := bufio.NewScanner(resp.Body)
-		scanner.Buffer(make([]byte, 4096), int(limit)+1)
-		resp.Body = &namespaceStream{source: resp.Body, scanner: scanner, mapping: mapping, limit: limit}
+		scanner.Buffer(make([]byte, 4096), int(^uint(0)>>1))
+		resp.Body = &namespaceStream{source: resp.Body, scanner: scanner, mapping: mapping}
 	} else {
-		body, err := io.ReadAll(io.LimitReader(resp.Body, limit+1))
+		body, err := io.ReadAll(resp.Body)
 		_ = resp.Body.Close()
 		if err != nil {
 			return err
-		}
-		if int64(len(body)) > limit {
-			return fmt.Errorf("namespace response exceeds size limit")
 		}
 		restored, err := mapping.restoreResponse(body)
 		if err != nil {
@@ -49,7 +46,6 @@ type namespaceStream struct {
 	source   io.ReadCloser
 	scanner  *bufio.Scanner
 	mapping  *namespaceMapping
-	limit    int64
 	pending  []byte
 	finished bool
 }
@@ -65,13 +61,8 @@ func (s *namespaceStream) Read(p []byte) (int, error) {
 			return 0, io.EOF
 		}
 		var lines []string
-		var size int64
 		for s.scanner.Scan() {
 			line := s.scanner.Text()
-			size += int64(len(line)) + 1
-			if size > s.limit {
-				return 0, fmt.Errorf("namespace SSE event exceeds size limit")
-			}
 			lines = append(lines, line)
 			if line == "" {
 				break

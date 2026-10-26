@@ -420,7 +420,6 @@ func cmdValidate(args []string, stdout io.Writer) error {
 			"listen":               cfg.Addr(),
 			"base_path":            cfg.BasePath,
 			"health_path":          routing.HealthPath,
-			"max_request_bytes":    cfg.MaxRequestBytes,
 			"routes":               routes,
 			"native_models":        cfg.NativeModelIDs(),
 			"preserve_client_auth": cfg.PreserveClientAuth(),

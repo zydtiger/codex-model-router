@@ -18,22 +18,17 @@ func TestImageGuards(t *testing.T) {
 		for _, tc := range []struct {
 			name, method, suffix, body string
 			auth                       bool
-			limit                      int64
 			want                       int
 		}{
-			{"no model", "POST", "", `{}`, true, 0, 200},
-			{"missing auth", "POST", "", `{}`, false, 0, 401},
-			{"wrong method", "GET", "", `{}`, true, 0, 405},
-			{"subpath", "POST", "/extra", `{}`, true, 0, 404},
-			{"too large", "POST", "", strings.Repeat("x", 17), true, 16, 413},
+			{"no model", "POST", "", `{}`, true, 200},
+			{"missing auth", "POST", "", `{}`, false, 401},
+			{"wrong method", "GET", "", `{}`, true, 405},
+			{"subpath", "POST", "/extra", `{}`, true, 404},
 		} {
 			t.Run(endpoint+"/"+tc.name, func(t *testing.T) {
 				native := newUpstream(t, nil)
 				remote := newUpstream(t, nil)
 				router, _ := newRouter(t, fmt.Sprintf(nativeChatGPTConfigTemplate, native.server.URL, blockedUpstream, remote.server.URL), nil)
-				if tc.limit > 0 {
-					router.cfg.MaxRequestBytes = tc.limit
-				}
 				headers := map[string]string{accountIDHeader: "test-account"}
 				if tc.auth {
 					headers["Authorization"] = "Bearer test-token"
@@ -95,7 +90,7 @@ func TestImageStreamingAndCancellation(t *testing.T) {
 	for _, endpoint := range []string{"/images/generations", "/images/edits"} {
 		t.Run(endpoint, func(t *testing.T) {
 			cancelled := make(chan struct{})
-			// Larger than the configured request limit: image output is not buffered or
+			// Image output is not buffered or
 			// subjected to the Responses adapter's size bound.
 			chunk := strings.Repeat("x", 4096)
 			native := newUpstream(t, func(w http.ResponseWriter, r *http.Request) {
@@ -109,7 +104,6 @@ func TestImageStreamingAndCancellation(t *testing.T) {
 				}
 			})
 			router, _ := newRouter(t, fmt.Sprintf(nativeChatGPTConfigTemplate, native.server.URL, blockedUpstream, blockedUpstream), nil)
-			router.cfg.MaxRequestBytes = 16
 			server := httptest.NewServer(router)
 			defer server.Close()
 			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -158,20 +152,17 @@ func TestRejectedEndpointLogging(t *testing.T) {
 	}
 }
 
-func TestImageDecodedUploadLimit(t *testing.T) {
+func TestCompressedImageUploadForwarded(t *testing.T) {
 	for _, endpoint := range []string{"/images/generations", "/images/edits"} {
 		t.Run(endpoint, func(t *testing.T) {
 			var body bytes.Buffer
 			zw := gzip.NewWriter(&body)
 			_, _ = zw.Write(bytes.Repeat([]byte("x"), 4096))
 			_ = zw.Close()
-			router, _ := newRouter(t, fmt.Sprintf(nativeChatGPTConfigTemplate, blockedUpstream, blockedUpstream, blockedUpstream), nil)
-			router.cfg.MaxRequestBytes = 128
-			if body.Len() >= 128 {
-				t.Fatal("fixture must fit encoded limit")
-			}
+			upstream := newUpstream(t, nil)
+			router, _ := newRouter(t, fmt.Sprintf(nativeChatGPTConfigTemplate, blockedUpstream, upstream.server.URL, blockedUpstream), nil)
 			got := doRequest(router, "POST", "/v1"+endpoint, body.Bytes(), map[string]string{"Authorization": "Bearer test", "Content-Encoding": "gzip"})
-			if got.Code != 413 {
+			if got.Code != 200 || upstream.count() != 1 || !bytes.Equal(upstream.requests()[0].Body, body.Bytes()) {
 				t.Fatalf("got %d: %s", got.Code, got.Body.String())
 			}
 		})

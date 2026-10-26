@@ -12,7 +12,7 @@ import (
 	"strings"
 )
 
-func readDisclosureJSON(resp *http.Response, limit int64) (toolFields, error) {
+func readDisclosureJSON(resp *http.Response) (toolFields, error) {
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil, fmt.Errorf("tool disclosure upstream returned HTTP %d", resp.StatusCode)
@@ -20,12 +20,9 @@ func readDisclosureJSON(resp *http.Response, limit int64) (toolFields, error) {
 	if encoding := resp.Header.Get("Content-Encoding"); encoding != "" && encoding != "identity" {
 		return nil, fmt.Errorf("unsupported disclosure response encoding")
 	}
-	body, err := io.ReadAll(io.LimitReader(resp.Body, limit+1))
+	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, err
-	}
-	if int64(len(body)) > limit {
-		return nil, fmt.Errorf("tool disclosure response exceeds size limit")
 	}
 	var fields toolFields
 	if json.Unmarshal(body, &fields) != nil || fields == nil {
@@ -34,13 +31,10 @@ func readDisclosureJSON(resp *http.Response, limit int64) (toolFields, error) {
 	return fields, nil
 }
 
-func (d *toolDisclosure) nextResponse(ctx context.Context, request *http.Request, transport http.RoundTripper, limit int64) (*http.Response, error) {
+func (d *toolDisclosure) nextResponse(ctx context.Context, request *http.Request, transport http.RoundTripper) (*http.Response, error) {
 	body, err := json.Marshal(d.fields)
 	if err != nil {
 		return nil, err
-	}
-	if int64(len(body)) > limit {
-		return nil, fmt.Errorf("tool disclosure request exceeds size limit")
 	}
 	req := request.Clone(ctx)
 	req.Body = io.NopCloser(bytes.NewReader(body))
@@ -103,7 +97,7 @@ func (u *disclosureUsage) apply(response toolFields) {
 
 // adaptDisclosureResponse handles only the synthetic loader. All real calls
 // are returned to Codex and retain its normal execution/approval boundary.
-func adaptDisclosureResponse(resp *http.Response, d *toolDisclosure, transport http.RoundTripper, limit int64) error {
+func adaptDisclosureResponse(resp *http.Response, d *toolDisclosure, transport http.RoundTripper) error {
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil
 	}
@@ -117,7 +111,7 @@ func adaptDisclosureResponse(resp *http.Response, d *toolDisclosure, transport h
 		resp.Body = &disclosureReader{PipeReader: reader, cancel: cancel, initial: initial}
 		go func() {
 			defer cancel()
-			err := d.stream(ctx, &first, transport, limit, writer)
+			err := d.stream(ctx, &first, transport, writer)
 			_ = writer.CloseWithError(err)
 		}()
 	} else {
@@ -126,7 +120,7 @@ func adaptDisclosureResponse(resp *http.Response, d *toolDisclosure, transport h
 		var visible []json.RawMessage
 		var usage disclosureUsage
 		for {
-			response, err := readDisclosureJSON(current, limit)
+			response, err := readDisclosureJSON(current)
 			if err != nil {
 				return err
 			}
@@ -141,16 +135,13 @@ func adaptDisclosureResponse(resp *http.Response, d *toolDisclosure, transport h
 				response["output"], _ = json.Marshal(visible)
 				usage.apply(response)
 				body, _ := json.Marshal(response)
-				if int64(len(body)) > limit {
-					return fmt.Errorf("tool disclosure response exceeds size limit")
-				}
 				resp.Body = io.NopCloser(bytes.NewReader(body))
 				break
 			}
 			if err := d.continueAfterLoad(output, response); err != nil {
 				return err
 			}
-			current, err = d.nextResponse(request.Context(), request, transport, limit)
+			current, err = d.nextResponse(request.Context(), request, transport)
 			if err != nil {
 				return err
 			}
@@ -174,16 +165,11 @@ func (r *disclosureReader) Close() error {
 	return r.PipeReader.Close()
 }
 
-// readSSEFrame bounds each frame, including multi-line data and comments.
-func readSSEFrame(scanner *bufio.Scanner, limit int64) ([]string, []byte, error) {
+// readSSEFrame reads one frame, including multi-line data and comments.
+func readSSEFrame(scanner *bufio.Scanner) ([]string, []byte, error) {
 	var lines, data []string
-	var size int64
 	for scanner.Scan() {
 		line := scanner.Text()
-		size += int64(len(line)) + 1
-		if size > limit {
-			return nil, nil, fmt.Errorf("tool disclosure SSE event exceeds size limit")
-		}
 		lines = append(lines, line)
 		if line == "data" {
 			data = append(data, "")
@@ -204,21 +190,18 @@ func readSSEFrame(scanner *bufio.Scanner, limit int64) ([]string, []byte, error)
 	return nil, nil, io.EOF
 }
 
-func writeDisclosureEvent(w io.Writer, event toolFields, sequence *int64, limit int64) error {
+func writeDisclosureEvent(w io.Writer, event toolFields, sequence *int64) error {
 	event["sequence_number"], _ = json.Marshal(*sequence)
 	*sequence++
 	data, err := json.Marshal(event)
 	if err != nil {
 		return err
 	}
-	if int64(len(data)) > limit {
-		return fmt.Errorf("tool disclosure SSE event exceeds size limit")
-	}
 	_, err = fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event.string("type"), data)
 	return err
 }
 
-func (d *toolDisclosure) stream(ctx context.Context, first *http.Response, transport http.RoundTripper, limit int64, w io.Writer) error {
+func (d *toolDisclosure) stream(ctx context.Context, first *http.Response, transport http.RoundTripper, w io.Writer) error {
 	request := first.Request
 	current := first
 	var sequence int64
@@ -237,7 +220,7 @@ func (d *toolDisclosure) stream(ctx context.Context, first *http.Response, trans
 			return fmt.Errorf("tool disclosure expected an identity SSE response")
 		}
 		scanner := bufio.NewScanner(current.Body)
-		scanner.Buffer(make([]byte, 4096), int(limit)+1)
+		scanner.Buffer(make([]byte, 4096), int(^uint(0)>>1))
 		indices := make(map[int]int)
 		hidden := make(map[int]bool)
 		nextIndex := len(visible)
@@ -246,7 +229,7 @@ func (d *toolDisclosure) stream(ctx context.Context, first *http.Response, trans
 		err := func() error {
 			defer current.Body.Close()
 			for {
-				lines, data, err := readSSEFrame(scanner, limit)
+				lines, data, err := readSSEFrame(scanner)
 				if err != nil {
 					if err == io.EOF {
 						return io.ErrUnexpectedEOF
@@ -323,7 +306,7 @@ func (d *toolDisclosure) stream(ctx context.Context, first *http.Response, trans
 						}
 					}
 				}
-				if err := writeDisclosureEvent(w, event, &sequence, limit); err != nil {
+				if err := writeDisclosureEvent(w, event, &sequence); err != nil {
 					return err
 				}
 			}
@@ -343,7 +326,7 @@ func (d *toolDisclosure) stream(ctx context.Context, first *http.Response, trans
 			}
 			usage.apply(response)
 			completion["response"], _ = json.Marshal(response)
-			if err := writeDisclosureEvent(w, completion, &sequence, limit); err != nil {
+			if err := writeDisclosureEvent(w, completion, &sequence); err != nil {
 				return err
 			}
 			_, err := io.WriteString(w, "data: [DONE]\n\n")
@@ -352,7 +335,7 @@ func (d *toolDisclosure) stream(ctx context.Context, first *http.Response, trans
 		if err := d.continueAfterLoad(output, response); err != nil {
 			return err
 		}
-		current, err = d.nextResponse(ctx, request, transport, limit)
+		current, err = d.nextResponse(ctx, request, transport)
 		if err != nil {
 			return err
 		}

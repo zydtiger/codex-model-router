@@ -288,7 +288,7 @@ func TestNamespaceStreamFlushAndCancellation(t *testing.T) {
 	}
 }
 
-func TestNamespaceResponseLimitsAndErrors(t *testing.T) {
+func TestNamespaceResponseErrors(t *testing.T) {
 	fields := namespaceRequest(t)
 	m, _ := flattenNamespaces(fields)
 	for _, tc := range []struct {
@@ -304,7 +304,7 @@ func TestNamespaceResponseLimitsAndErrors(t *testing.T) {
 		{"application/json", `{"error":"unchanged"}`, 400, false},
 	} {
 		resp := &http.Response{StatusCode: tc.status, Header: http.Header{"Content-Type": {tc.content}}, Body: io.NopCloser(strings.NewReader(tc.body))}
-		err := adaptNamespaceResponse(resp, m, 100)
+		err := adaptNamespaceResponse(resp, m)
 		if err == nil {
 			_, err = io.ReadAll(resp.Body)
 		}

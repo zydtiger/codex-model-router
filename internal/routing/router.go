@@ -122,23 +122,22 @@ type routeSnapshot struct {
 // requestState carries the per-request routing decision through the reverse
 // proxy hooks.
 type requestState struct {
-	started       time.Time
-	method        string
-	rest          string
-	model         string
-	route         string
-	target        *target
-	body          []byte
-	headers       http.Header
-	status        int
-	result        string
-	warnings      []string
-	namespaces    *namespaceMapping
-	customs       *customMapping
-	disclosure    *toolDisclosure
-	compaction    *compactionRequest
-	responseLimit int64
-	diagnostics   *responseDiagnostics
+	started     time.Time
+	method      string
+	rest        string
+	model       string
+	route       string
+	target      *target
+	body        []byte
+	headers     http.Header
+	status      int
+	result      string
+	warnings    []string
+	namespaces  *namespaceMapping
+	customs     *customMapping
+	disclosure  *toolDisclosure
+	compaction  *compactionRequest
+	diagnostics *responseDiagnostics
 }
 
 type stateKey struct{}
@@ -297,7 +296,7 @@ func (h *Router) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	body, err := readBody(r, h.cfg.MaxRequestBytes)
+	body, err := readBody(r)
 	if err != nil {
 		h.rejectRequestError(w, err, started, r.Method, rest, "")
 		return
@@ -338,7 +337,7 @@ func (h *Router) serveNativeTool(w http.ResponseWriter, r *http.Request, rest st
 		h.methodNotAllowed(w, http.MethodPost)
 		return
 	}
-	body, err := readBody(r, h.cfg.MaxRequestBytes)
+	body, err := readBody(r)
 	if err != nil {
 		h.rejectRequestError(w, err, started, r.Method, rest, "")
 		return
@@ -382,7 +381,6 @@ func (h *Router) selectTarget(r *http.Request, model string, body *decodedBody, 
 			return nil, err
 		}
 		state.compaction = compaction
-		state.responseLimit = h.cfg.MaxRequestBytes
 		// Custom-tool preparation runs before the shared history translation so
 		// replayed custom traffic is namespace-safe function history, and its
 		// declaration rewrite happens before namespace flattening records the
@@ -419,7 +417,6 @@ func (h *Router) selectTarget(r *http.Request, model string, body *decodedBody, 
 					}
 				}
 			}
-			state.responseLimit = h.cfg.MaxRequestBytes
 		}
 		if compaction != nil {
 			compaction.finishRequest(translated)
@@ -427,9 +424,6 @@ func (h *Router) selectTarget(r *http.Request, model string, body *decodedBody, 
 		encoded, err := encodeJSON(translated)
 		if err != nil {
 			return nil, err
-		}
-		if int64(len(encoded)) > h.cfg.MaxRequestBytes {
-			return nil, clientError(http.StatusRequestEntityTooLarge, "request_too_large", "translated request body exceeds size limit")
 		}
 		headers, err := buildRemoteHeaders(r.Header, route, h.env)
 		if err != nil {
@@ -477,9 +471,6 @@ func (h *Router) selectTarget(r *http.Request, model string, body *decodedBody, 
 		encoded, encodeErr := encodeJSON(fields)
 		if encodeErr != nil {
 			return nil, encodeErr
-		}
-		if int64(len(encoded)) > h.cfg.MaxRequestBytes {
-			return nil, clientError(http.StatusRequestEntityTooLarge, "request_too_large", "expanded checkpoint exceeds request size limit")
 		}
 		state.body = encoded
 		headers.Del("Content-Encoding")
@@ -563,22 +554,22 @@ func (t *target) modifyResponse(resp *http.Response) error {
 		state.diagnostics = &responseDiagnostics{}
 		state.diagnostics.capture(resp)
 		if state.compaction != nil {
-			return adaptCompactionResponse(resp, state.compaction, state.responseLimit)
+			return adaptCompactionResponse(resp, state.compaction)
 		}
 		if state.disclosure != nil {
-			if err := adaptDisclosureResponse(resp, state.disclosure, t.transport, state.responseLimit); err != nil {
+			if err := adaptDisclosureResponse(resp, state.disclosure, t.transport); err != nil {
 				return err
 			}
 		}
 		if state.namespaces != nil {
-			if err := adaptNamespaceResponse(resp, state.namespaces, state.responseLimit); err != nil {
+			if err := adaptNamespaceResponse(resp, state.namespaces); err != nil {
 				return err
 			}
 		}
 		// Custom restoration runs last, on namespace-restored identities, and
 		// never replaces the tool-free compaction summary above.
 		if state.customs != nil {
-			if err := adaptCustomResponse(resp, state.customs, state.responseLimit); err != nil {
+			if err := adaptCustomResponse(resp, state.customs); err != nil {
 				return err
 			}
 		}

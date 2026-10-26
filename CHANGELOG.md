@@ -3,6 +3,15 @@
 This file is the version history for codex-model-router. Copy the relevant
 released section verbatim into the corresponding GitHub release notes.
 
+## [Unreleased]
+
+### Changed
+
+- Leave request and response size limits to upstreams, including gzip/zstd
+  decoding, tool adaptation and compaction checkpoints. Preserve native
+  compressed bodies and upstream HTTP errors.
+- Remove `max_request_bytes`; remove the old configuration key when upgrading.
+
 ## [0.2.2] - 2026-10-13
 
 ### Fixed

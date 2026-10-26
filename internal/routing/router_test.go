@@ -557,11 +557,10 @@ func TestModelIDsMatchExactly(t *testing.T) {
 	}
 }
 
-func TestRequestBodyBoundsAndShapes(t *testing.T) {
+func TestRequestBodyShapes(t *testing.T) {
 	local := newUpstream(t, nil)
 	router, _ := newRouter(t, fmt.Sprintf(`{
       "listen": {"host": "127.0.0.1", "port": 4317},
-      "max_request_bytes": 4096,
       "native": {"chatgpt_base_url": "http://127.0.0.1:1/backend-api/codex", "api_base_url": "http://127.0.0.1:1/v1", "models": ["gpt-5"]},
       "routes": [{"name":"local","base_url":%q,"models":["qwen3-32b"]}]
     }`, local.server.URL), nil)
@@ -578,7 +577,6 @@ func TestRequestBodyBoundsAndShapes(t *testing.T) {
 		{"json array", []byte(`[{"model":"qwen3-32b"}]`), nil, http.StatusBadRequest, "invalid_json"},
 		{"trailing content", []byte(`{"model":"qwen3-32b"} {}`), nil, http.StatusBadRequest, "invalid_json"},
 		{"no model", []byte(`{"input":"hi"}`), nil, http.StatusBadRequest, "model_required"},
-		{"oversized", jsonBody(t, map[string]any{"model": "qwen3-32b", "padding": strings.Repeat("x", 9000)}), nil, http.StatusRequestEntityTooLarge, "request_too_large"},
 		{"unsupported encoding", []byte("binary"), map[string]string{"Content-Encoding": "br"}, http.StatusUnsupportedMediaType, "unsupported_content_encoding"},
 	}
 	for _, testCase := range cases {

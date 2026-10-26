@@ -62,9 +62,6 @@ func TestMinimalConfigCompilesRouting(t *testing.T) {
 	if got := cfg.BaseURL(); got != "http://127.0.0.1:4317/v1" {
 		t.Fatalf("BaseURL = %q", got)
 	}
-	if cfg.MaxRequestBytes != config.DefaultMaxRequestByte {
-		t.Fatalf("max_request_bytes default = %d", cfg.MaxRequestBytes)
-	}
 	if !cfg.PreserveClientAuth() {
 		t.Fatal("preserve_client_auth should default to true")
 	}
@@ -558,7 +555,7 @@ func TestConfigRoundTripsThroughJSONTags(t *testing.T) {
 	if err := json.Unmarshal(example, &fields); err != nil {
 		t.Fatal(err)
 	}
-	for _, key := range []string{"listen", "base_path", "max_request_bytes", "log", "native", "routes", "catalog"} {
+	for _, key := range []string{"listen", "base_path", "log", "native", "routes", "catalog"} {
 		if _, ok := fields[key]; !ok {
 			t.Fatalf("the example should document %s", key)
 		}

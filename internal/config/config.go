@@ -23,10 +23,9 @@ import (
 
 // Default sizes and addresses used when the configuration omits a value.
 const (
-	DefaultListenHost     = "127.0.0.1"
-	DefaultListenPort     = 4317
-	DefaultBasePath       = "/v1"
-	DefaultMaxRequestByte = int64(32 << 20)
+	DefaultListenHost = "127.0.0.1"
+	DefaultListenPort = 4317
+	DefaultBasePath   = "/v1"
 
 	// ChatGPTBackendBaseURL is the account-session Responses endpoint. Requests
 	// that carry ChatGPT-Account-ID are sent here instead of the API base URL.
@@ -78,14 +77,11 @@ type Config struct {
 	Listen Listen `json:"listen"`
 	// BasePath is the URL prefix Codex appends paths to. The generated
 	// openai_base_url value is http://<host>:<port><BasePath>.
-	BasePath string `json:"base_path"`
-	// MaxRequestBytes bounds decoded request bodies, in every direction that
-	// the router itself reads.
-	MaxRequestBytes int64   `json:"max_request_bytes"`
-	Log             Log     `json:"log"`
-	Native          Native  `json:"native"`
-	Routes          []Route `json:"routes"`
-	Catalog         Catalog `json:"catalog"`
+	BasePath string  `json:"base_path"`
+	Log      Log     `json:"log"`
+	Native   Native  `json:"native"`
+	Routes   []Route `json:"routes"`
+	Catalog  Catalog `json:"catalog"`
 
 	// baseDir is the directory of the file this configuration was loaded from. It is
 	// empty for bytes that were not read from a file, and relative catalog paths are
@@ -336,9 +332,6 @@ func parseInDirectory(data []byte, directory string) (*Config, error) {
 // applyDefaults fills omitted values before validation. Fields that a user
 // must opt into are never defaulted to a permissive value.
 func (c *Config) applyDefaults() {
-	if c.MaxRequestBytes == 0 {
-		c.MaxRequestBytes = DefaultMaxRequestByte
-	}
 	if strings.TrimSpace(c.Catalog.OutputFile) == "" {
 		if path, err := DefaultCatalogPath(); err == nil {
 			c.Catalog.OutputFile = path
@@ -403,9 +396,6 @@ func (c *Config) Validate() error {
 	}
 	if err := c.normalizeBasePath(); err != nil {
 		add("%v", err)
-	}
-	if c.MaxRequestBytes <= 0 {
-		add("max_request_bytes must be positive")
 	}
 	if err := normalizeLogLevel(&c.Log.Level); err != nil {
 		add("%v", err)

@@ -758,19 +758,6 @@ func TestCustomRejections(t *testing.T) {
 		}
 	})
 
-	t.Run("buffered arguments are bounded", func(t *testing.T) {
-		up := newUpstream(t, func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Content-Type", "text/event-stream")
-			fmt.Fprintf(w, "data: {\"type\":\"response.output_item.added\",\"sequence_number\":0,\"output_index\":0,\"item\":{\"type\":\"function_call\",\"id\":\"fc_1\",\"call_id\":\"call_1\",\"name\":\"apply_patch\"}}\n\n")
-			fmt.Fprintf(w, "data: {\"type\":\"response.function_call_arguments.delta\",\"output_index\":0,\"item_id\":\"fc_1\",\"delta\":%q}\n\n", strings.Repeat("x", 4096))
-		})
-		router, _ := newRouter(t, customRouteConfig(t, up.server.URL, "", `"max_request_bytes": 2048,`), nil)
-		request, _ := json.Marshal(customRequest(t))
-		result := doRequest(router, http.MethodPost, "/v1/responses", request, nil)
-		if strings.Contains(result.Body.String(), "response.completed") {
-			t.Fatalf("oversized buffered arguments were not refused:\n%s", result.Body.String())
-		}
-	})
 }
 
 // The disclosure loader must keep working with bridged custom tools, and the
@@ -987,9 +974,8 @@ func TestCustomOrdinaryCallsWithWrapperArgumentsUnchanged(t *testing.T) {
 	}
 }
 
-// Exercise stream limits independently of request-body limits, so a rejected
-// client request cannot accidentally make the upstream-state tests pass.
-func readCustomStream(t *testing.T, frames string, limit int64) (string, error) {
+// Exercise the adapter directly against upstream response state.
+func readCustomStream(t *testing.T, frames string) (string, error) {
 	t.Helper()
 	fields, _ := decodeJSON([]byte(`{"tools":[{"type":"custom","name":"record"}]}`))
 	mapping, err := prepareCustomTools(fields)
@@ -997,7 +983,7 @@ func readCustomStream(t *testing.T, frames string, limit int64) (string, error) 
 		t.Fatal(err)
 	}
 	resp := &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": {"text/event-stream"}}, Body: io.NopCloser(strings.NewReader(frames))}
-	if err := adaptCustomResponse(resp, mapping, limit); err != nil {
+	if err := adaptCustomResponse(resp, mapping); err != nil {
 		t.Fatal(err)
 	}
 	defer resp.Body.Close()
@@ -1005,7 +991,7 @@ func readCustomStream(t *testing.T, frames string, limit int64) (string, error) 
 	return string(body), readErr
 }
 
-func TestCustomRetainedStateLimits(t *testing.T) {
+func TestCustomRetainedStatePreservesAllCalls(t *testing.T) {
 	for _, empty := range []bool{false, true} {
 		t.Run(fmt.Sprint("empty=", empty), func(t *testing.T) {
 			var frames strings.Builder
@@ -1019,13 +1005,13 @@ func TestCustomRetainedStateLimits(t *testing.T) {
 				fmt.Fprintf(&frames, "data: {\"type\":\"response.function_call_arguments.delta\",\"output_index\":%d,\"item_id\":\"f%d\",\"delta\":%q}\n\n", i, i, args)
 				fmt.Fprintf(&frames, "data: {\"type\":\"response.function_call_arguments.done\",\"output_index\":%d,\"item_id\":\"f%d\",\"arguments\":%q}\n\n", i, i, args)
 			}
-			body, err := readCustomStream(t, frames.String(), 1024)
-			if err == nil || !strings.Contains(err.Error(), "size limit") {
-				t.Fatalf("limit error = %v", err)
+			body, err := readCustomStream(t, frames.String()+"data: [DONE]\n\n")
+			if err != nil {
+				t.Fatal(err)
 			}
 			completed := countEventType(scanEvents(t, body), "response.custom_tool_call_input.done")
-			if empty && completed >= 4 || !empty && completed != 1 {
-				t.Fatalf("completed %d calls before cap, empty=%v", completed, empty)
+			if completed != 20 {
+				t.Fatalf("completed %d calls, empty=%v", completed, empty)
 			}
 		})
 	}
@@ -1048,7 +1034,7 @@ func TestCustomTerminalInputFallback(t *testing.T) {
 				}
 				raw, _ := json.Marshal(map[string]any{"type": "response.completed", "sequence_number": 0, "response": map[string]any{"object": "response", "output": []any{item}}})
 				fmt.Fprintf(&frames, "data: %s\n\ndata: [DONE]\n\n", raw)
-				body, err := readCustomStream(t, frames.String(), 4096)
+				body, err := readCustomStream(t, frames.String())
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -1079,7 +1065,7 @@ func TestCustomTerminalRegeneratedIDs(t *testing.T) {
 				"data: {\"type\":\"response.function_call_arguments.done\",\"sequence_number\":1,\"output_index\":0,\"item_id\":\"stream_id\",\"arguments\":\"{\\\"input\\\":\\\"ok\\\"}\"}\n\n"
 			args, _ := json.Marshal(map[string]string{"input": input})
 			terminal, _ := json.Marshal(map[string]any{"type": "response.completed", "sequence_number": 2, "response": map[string]any{"object": "response", "output": []any{map[string]any{"type": "function_call", "name": "record", "id": "new_id", "call_id": "new_call", "arguments": string(args)}}}})
-			body, err := readCustomStream(t, frames+"data: "+string(terminal)+"\n\n", 4096)
+			body, err := readCustomStream(t, frames+"data: "+string(terminal)+"\n\n")
 			if input != "ok" {
 				if err == nil || strings.Contains(body, "response.completed") {
 					t.Fatalf("contradictory input accepted: %v %s", err, body)

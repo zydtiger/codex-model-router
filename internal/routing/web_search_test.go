@@ -5,7 +5,6 @@ import (
 	"compress/gzip"
 	"fmt"
 	"net/http"
-	"strings"
 	"testing"
 )
 
@@ -71,24 +70,19 @@ func TestWebSearchGuards(t *testing.T) {
 	for _, tc := range []struct {
 		name, method, path, body string
 		auth                     bool
-		limit                    int64
 		want                     int
 	}{
-		{"no model", "POST", "/v1/alpha/search", `{}`, true, 0, 200},
-		{"missing auth", "POST", "/v1/alpha/search", `{}`, false, 0, 401},
-		{"wrong method", "GET", "/v1/alpha/search", `{}`, true, 0, 405},
-		{"subpath", "POST", "/v1/alpha/search/extra", `{}`, true, 0, 404},
-		{"other endpoint", "POST", "/v1/alpha/other", `{}`, true, 0, 404},
-		{"too large", "POST", "/v1/alpha/search", strings.Repeat("x", 17), true, 16, 413},
+		{"no model", "POST", "/v1/alpha/search", `{}`, true, 200},
+		{"missing auth", "POST", "/v1/alpha/search", `{}`, false, 401},
+		{"wrong method", "GET", "/v1/alpha/search", `{}`, true, 405},
+		{"subpath", "POST", "/v1/alpha/search/extra", `{}`, true, 404},
+		{"other endpoint", "POST", "/v1/alpha/other", `{}`, true, 404},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			chat := newUpstream(t, nil)
 			api := newUpstream(t, nil)
 			remote := newUpstream(t, nil)
 			router, _ := newRouter(t, fmt.Sprintf(nativeChatGPTConfigTemplate, chat.server.URL, api.server.URL, remote.server.URL), nil)
-			if tc.limit > 0 {
-				router.cfg.MaxRequestBytes = tc.limit
-			}
 			headers := map[string]string{accountIDHeader: "test-account"}
 			if tc.auth {
 				headers["Authorization"] = "Bearer test-token"
