@@ -5,12 +5,18 @@ released section verbatim into the corresponding GitHub release notes.
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-26
+
 ### Changed
 
 - Leave request and response size limits to upstreams, including gzip/zstd
   decoding, tool adaptation and compaction checkpoints. Preserve native
   compressed bodies and upstream HTTP errors.
+
+### Breaking
+
 - Remove `max_request_bytes`; remove the old configuration key when upgrading.
+  Configuration validation rejects this obsolete key.
 
 ## [0.2.2] - 2026-10-13
 
