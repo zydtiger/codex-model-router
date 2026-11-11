@@ -67,7 +67,10 @@ Releases use SemVer `vX.Y.Z` tags. Before `1.0.0`, breaking public CLI, config,
 catalog, or service behavior increments the minor version; compatible changes
 increment the patch version. Git tags are the Go binary version source: release
 packaging passes the exact tag with `-ldflags`, while development builds report
-`dev`. [CHANGELOG.md](CHANGELOG.md) is the sole version history; copy its
+`dev`. `flake.nix` cannot read tags and stamps the newest released
+[CHANGELOG.md](CHANGELOG.md) section instead, so add that section in the commit
+the tag will point at, and update its `vendorHash` whenever `go.mod` or `go.sum`
+changes. [CHANGELOG.md](CHANGELOG.md) is the sole version history; copy its
 released section into GitHub release notes. From clean, synchronized `main`,
 create an annotated tag only with explicit release approval, then run
 `scripts/package-release.sh` to produce darwin/arm64 and linux/amd64 archives
