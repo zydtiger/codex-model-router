@@ -5,6 +5,13 @@ released section verbatim into the corresponding GitHub release notes.
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-11-11
+
+### Added
+
+- Add `flake.nix`, which builds the same static, version-stamped executable
+  from source with Nix: `nix run github:zydtiger/codex-model-router -- version`.
+
 ## [0.3.0] - 2026-10-26
 
 ### Changed
