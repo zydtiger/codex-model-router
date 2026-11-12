@@ -5,6 +5,13 @@ released section verbatim into the corresponding GitHub release notes.
 
 ## [Unreleased]
 
+### Added
+
+- Add a Home Manager module, `homeManagerModules.default` in the flake. It
+  installs the router, generates and validates the configuration and catalog at
+  build time, and runs the router as a LaunchAgent or systemd user service. See
+  [docs/home-manager.md](docs/home-manager.md).
+
 ## [0.3.1] - 2026-11-11
 
 ### Added

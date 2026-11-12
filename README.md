@@ -232,6 +232,7 @@ to off, and log rotation is not provided.
 - [Codex integration](docs/codex-desktop.md)
 - [LaunchAgent lifecycle](docs/launchd.md)
 - [Systemd user service](docs/systemd.md)
+- [Home Manager module](docs/home-manager.md)
 
 Keep personal runtime files outside the checkout. Root-level `config.json` and
 `catalog.json`, build outputs, and logs are ignored by Git.

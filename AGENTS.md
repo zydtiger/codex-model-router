@@ -10,6 +10,8 @@ are introduced. Read `README.md` before changing behavior.
 - Add implementation packages under `internal/` when needed.
 - Keep tests beside source as `_test.go`; use `testdata/` for fixtures.
 - Keep service templates and installation logic in this repository.
+- `nix/home-manager.nix` is the Home Manager module the flake exports. Keep its
+  service definitions consistent with what `service install` writes.
 - Keep personal paths, endpoints, credentials, and local configuration out of Git.
 
 ## Installation layout

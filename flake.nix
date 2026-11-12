@@ -4,7 +4,7 @@
   inputs.nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable";
 
   outputs =
-    { nixpkgs, ... }:
+    { self, nixpkgs, ... }:
     let
       inherit (nixpkgs) lib;
       systems = [
@@ -86,5 +86,16 @@
           default = codex-model-router;
         }
       );
+
+      # Installs and runs the router: import it and set
+      # `services.codex-model-router`. See docs/home-manager.md.
+      homeManagerModules.default =
+        { pkgs, ... }:
+        {
+          imports = [ ./nix/home-manager.nix ];
+          services.codex-model-router.package =
+            lib.mkDefault
+              self.packages.${pkgs.stdenv.hostPlatform.system}.default;
+        };
     };
 }
