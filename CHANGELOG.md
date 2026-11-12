@@ -5,6 +5,8 @@ released section verbatim into the corresponding GitHub release notes.
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-11-11
+
 ### Added
 
 - Add a Home Manager module, `homeManagerModules.default` in the flake. It
